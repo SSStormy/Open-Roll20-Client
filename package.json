@@ -21,9 +21,11 @@
   "homepage": "https://github.com/SSStormy/Open-Roll20-Client#readme",
   "devDependencies": {
     "@babel/core": "^7.1.0",
+    "@babel/plugin-proposal-class-properties": "^7.1.0",
     "@babel/preset-env": "^7.1.0",
     "@babel/preset-typescript": "^7.1.0",
     "@types/dotenv": "^4.0.3",
+    "awesome-typescript-loader": "^5.2.1",
     "babel-loader": "^8.0.2",
     "source-map-loader": "^0.2.4",
     "typescript": "^3.0.3",
