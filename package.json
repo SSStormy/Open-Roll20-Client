@@ -6,6 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "webpack -w",
+    "token": "node src/refreshToken.js",
     "run": "node dist/main.js"
   },
   "repository": {
@@ -22,10 +23,17 @@
     "@babel/core": "^7.1.0",
     "@babel/preset-env": "^7.1.0",
     "@babel/preset-typescript": "^7.1.0",
+    "@types/dotenv": "^4.0.3",
     "babel-loader": "^8.0.2",
     "source-map-loader": "^0.2.4",
     "typescript": "^3.0.3",
     "webpack": "^4.19.1",
     "webpack-cli": "^3.1.0"
+  },
+  "dependencies": {
+    "@types/firebase": "^3.2.1",
+    "dotenv": "^6.0.0",
+    "firebase": "^2.4.0",
+    "roll20auth": "^1.0.0"
   }
 }
