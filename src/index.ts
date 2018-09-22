@@ -24,78 +24,79 @@ interface ICharacterData {
     id: string;
 }
 
-interface IAttributeData {
-    id: string;
-}
-
-class Attribute {
-    private lowLevel: IAttributeData;
-    private campaign: Campaign;
-
-    constructor(rawData: IAttributeData, campaign: Campaign) {
-        this.lowLevel = rawData;
-        this.campaign = campaign;
-    }
-
-    public static async fromRaw(rawData: IAttributeData, campaign: Campaign) {
-        return Promise.resolve(new Attribute(rawData, campaign));
-    }
-
-
-    public getCampaign() {
-        return this.campaign;
-    }
-}
-
 interface IFirebaseCollectionParams<THigh, TLow> {
     campaign: Campaign;
     url: string;
-    factory : (a: TLow, b: Campaign) => Promise<THigh>;
+    factory: (a: TLow, b: Campaign) => Promise<THigh>;
 }
 
-class ReadyTracker {
-    private readyTable: { [id: string]: boolean } = {};
-    private wasReady: boolean = false;
-    private readyEvent: FunctionPool<() => void> = new FunctionPool();
-
-    public ready() {
-        return this.readyEvent;
-    }
-
-    private tryFireReady() {
-        for (const key in this.readyTable) {
-            const isReady = this.readyTable[key];
-            if (!isReady) return;
-        }
-
-        if (this.wasReady) return;
-        this.wasReady = true;
-
-        this.readyEvent.fireAll();
-    }
-
-    public registerCollection(coll: FirebaseCollection<any, any>) {
-        const url: string = coll.getUrl();
-
-        this.readyTable[url] = false;
-
-        coll.ready().on(() => {
-            this.readyTable[url] = true;
-            this.tryFireReady();
-        })
-    }
-}
-
-class Character {
-
-    private lowLevel: ICharacterData;
-    private attribs: FirebaseCollection<Attribute, IAttributeData>;
-    private readyTracker: ReadyTracker = new ReadyTracker();
+abstract class HighLevelObject<TLow> {
+    private lowLevel: TLow;
+    private previousLowLevel: TLow | null = null;
     private campaign: Campaign;
 
-    private constructor(rawData: ICharacterData, campaign: Campaign, onReady?: (c: Character) => void) {
-        this.lowLevel = rawData;
+    constructor(lowLevel: TLow, campaign: Campaign) {
+        this.lowLevel = lowLevel;
         this.campaign = campaign;
+    }
+
+    protected abstract internalUpdateLowLevelData(newLow: TLow): void;
+
+    public updateLowLevelData(newLow: TLow) {
+
+        this.internalUpdateLowLevelData(newLow);
+
+        this.previousLowLevel = this.lowLevel;
+        this.lowLevel = newLow;
+    }
+
+    public getCampaign() {
+        return this.campaign
+    }
+
+    public getLowLevel() {
+        return this.lowLevel;
+    }
+
+    public getPreviousLowLevel(): TLow | null {
+        return this.previousLowLevel;
+    }
+}
+
+
+interface IAttributeData {
+    id: string;
+    name: string;
+    current: string;
+    max: string;
+}
+
+class Attribute extends HighLevelObject<IAttributeData> {
+
+    constructor(rawData: IAttributeData, campaign: Campaign) {
+        super(rawData, campaign);
+    }
+
+    public static async fromRaw(rawData: IAttributeData, campaign: Campaign) {
+        return new Attribute(rawData, campaign);
+    }
+
+    protected internalUpdateLowLevelData(newLow: IAttributeData): void {
+        // TODO
+    }
+}
+
+
+class Character extends HighLevelObject<ICharacterData> {
+
+    private attribs: FirebaseCollection<Attribute, IAttributeData>;
+
+    private constructor(rawData: ICharacterData, campaign: Campaign) {
+        super(rawData, campaign);
+    }
+
+    protected internalUpdateLowLevelData(newLow: ICharacterData): void {
+        // TODO
     }
 
     public static async fromRaw(
@@ -104,21 +105,15 @@ class Character {
 
         const char = new Character(rawData, campaign);
 
-        char.attribs = await FirebaseCollection.create({
+        char.attribs = new FirebaseCollection({
             campaign,
             url: `/char-attribs/char/${rawData.id}/`,
             factory: Attribute.fromRaw
         });
 
-        await new Promise((ok, err) => {
-            char.attribs.ready().on(() => ok());
-        });
+        await char.attribs.getReadyPromise();
 
         return char;
-    }
-
-    public getCampaign() {
-        return this.campaign;
     }
 
     public getAttributes() {
@@ -133,7 +128,7 @@ class Campaign {
 
     private characters: FirebaseCollection<Character, ICharacterData>;
 
-    private readyTracker: ReadyTracker = new ReadyTracker();
+    private readyEvent: FunctionPool<() => void> = new FunctionPool();
 
     private constructor(campaignIdString: string, gntkn: string, playerId: string) {
         // @ts-ignore
@@ -144,16 +139,19 @@ class Campaign {
         this.chat = this.firebase.child("/chat/");
     }
 
-    public static async create(campaignIdString: string, gntkn: string, playerId: string) {
+    public static create(campaignIdString: string, gntkn: string, playerId: string) {
         const cmp = new Campaign(campaignIdString, gntkn, playerId);
 
-        cmp.characters = await FirebaseCollection.create<Character, ICharacterData>({
+        cmp.characters = new FirebaseCollection<Character, ICharacterData>({
             campaign: cmp,
             url: "/characters/",
             factory: Character.fromRaw
         });
 
-        cmp.readyTracker.registerCollection(cmp.characters);
+        Promise.all([cmp.characters.getReadyPromise()])
+            .then(() => {
+                cmp.readyEvent.fireAll();
+            });
 
         return cmp;
     }
@@ -167,10 +165,10 @@ class Campaign {
     }
 
     public ready() {
-        return this.readyTracker.ready();
+        return this.readyEvent;
     }
 
-    public say(content: string, who: string, type: string = "general") {
+    public say(content: string, who: string = "not a bot", type: string = "general") {
         const key = this.chat.push().key();
         // @ts-ignore
         const priority = Firebase.ServerValue.TIMESTAMP;
@@ -213,145 +211,162 @@ class FunctionPool<T> {
     }
 }
 
-class FirebaseCollectionEventPool<TLowLevel> {
-    private parent: Firebase_Child_T;
-    private eventName: string;
-
-    private fxs: FunctionPool<(data: TLowLevel, key: string) => void> = new FunctionPool();
-
-    constructor(eventName: string, parent: Firebase_Child_T) {
-        this.parent = parent;
-        this.eventName = eventName;
-        this.parent.on(this.eventName, this.onGetData);
-    }
-
-    private onGetData = (rawData: FirebaseDataSnapshot<TLowLevel>) => {
-        const data: TLowLevel = rawData.val();
-        let key = null;
-
-        if (typeof(rawData.key) === "function") {
-            key = rawData.key();
-        }
-
-        if (!key) {
-            key = (<any>data).id;
-        }
-
-        this.fxs.fireAll(data, key);
-    };
-
-    public on(callback: (data: TLowLevel, key: string) => void) {
-        this.fxs.on(callback);
-    }
-
-    public off(callback: (data: TLowLevel, key: string) => void) {
-        this.fxs.off(callback);
-    }
-}
-
-
-class FirebaseCollection<THighLevel, TLowLevel> {
-
+class FirebaseCollection<THighLevel extends HighLevelObject<TLowLevel>, TLowLevel> {
     private firebase: Firebase_Child_T;
     private campaign: Campaign;
 
-    private firebaseValueEvent: FirebaseCollectionEventPool<{ [id: string]: TLowLevel }>;
-    private firebaseAddedEvent: FirebaseCollectionEventPool<TLowLevel>;
-    private firebaseChangedEvent: FirebaseCollectionEventPool<TLowLevel>;
-    private firebaseRemovedEvent: FirebaseCollectionEventPool<TLowLevel>;
-
-    private valueEvent: FunctionPool<(data: THighLevel) => void> = new FunctionPool();
-    private addedEvent: FunctionPool<(data: THighLevel) => void> = new FunctionPool();
-    private changedEvent: FunctionPool<(data: THighLevel) => void> = new FunctionPool();
-    private removedEvent: FunctionPool<(key: string) => void> = new FunctionPool();
-    private readyEvent: FunctionPool<(data: { [id: string]: THighLevel }) => void> = new FunctionPool();
+    private addedEvent: FunctionPool<(data: THighLevel) => Promise<void>> = new FunctionPool();
+    private changedEvent: FunctionPool<(data: THighLevel) => Promise<void>> = new FunctionPool();
+    private removedEvent: FunctionPool<(data: THighLevel) => Promise<void>> = new FunctionPool();
+    private readyEvent: FunctionPool<(data: { [id: string]: THighLevel }) => Promise<void>> = new FunctionPool();
 
     private byId: { [id: string]: THighLevel } = {};
+    private idToIndex: { [id: string]: number } = {};
+    private all: THighLevel[] = [];
+
     private highLevelFactory: (a: TLowLevel, b: Campaign) => Promise<THighLevel>;
 
     private url: string;
+    private isReady: boolean = false;
 
-    private constructor(params: IFirebaseCollectionParams<THighLevel, TLowLevel>) {
+    private readyPromise: Promise<void>;
+
+    public constructor(params: IFirebaseCollectionParams<THighLevel, TLowLevel>) {
         this.url = params.url;
         this.campaign = params.campaign;
         this.highLevelFactory = params.factory;
         this.firebase = this.campaign.getFirebase().child(this.url);
 
-        this.firebaseValueEvent = new FirebaseCollectionEventPool("value", this.firebase);
-        this.firebaseChangedEvent = new FirebaseCollectionEventPool("child_changed", this.firebase);
-        this.firebaseRemovedEvent = new FirebaseCollectionEventPool("child_removed", this.firebase);
-        this.firebaseAddedEvent = new FirebaseCollectionEventPool("child_added", this.firebase);
+        this.readyPromise = new Promise(ok => this.ready().on(async () => {
+            console.log(`================${this.url} IS READY WITH ${this.all.length} ELEMENTS`);
+            ok();
+        }));
+
+        this.firebase.once("value", this.defaultOnValue);
+
+        console.log(`created firebase collection ${this.url}`);
     }
 
-    public static async create<THigh, TLow>(params: IFirebaseCollectionParams<THigh, TLow>) {
-        const coll = new FirebaseCollection(params);
+    private defaultOnValue = async (firebaseData: any) => {
+        console.log('value');
+        const data: { [id: string]: TLowLevel } = firebaseData.val();
 
-        coll.getInitialData().then(() => {
-            coll.readyEvent.fireAll();
-        });
+        for (const key in data) {
+            if (this.doesKeyExist(key)) continue;
 
-        coll.firebaseValueEvent.on(coll.defaultOnValue);
-        coll.firebaseAddedEvent.on(coll.defaultOnAdded);
-        coll.firebaseChangedEvent.on(coll.defaultOnChanged);
-        coll.firebaseRemovedEvent.on(coll.deafultOnRemoved);
+            const low = data[key];
 
-        console.log(`created firebase collection ${coll.url}`);
+            await this.internalAddOrChange(low, key);
+            console.log(`${key} value`);
+        }
 
-        return coll;
-    }
+        if (!this.isReady) {
+            this.isReady = true;
 
-    private getInitialData(): Promise<null> {
-        return new Promise((ok, err) => {
-            const fx = async (data: { [id: string]: TLowLevel }) => {
-                this.firebaseValueEvent.off(fx);
+            this.firebase.on("child_added", this.defaultOnAdded);
+            this.firebase.on("child_changed", this.defaultOnChanged);
+            this.firebase.on("child_removed", this.defaultOnRemoved);
 
-                await this.defaultOnValue(data);
-                ok();
-            };
+            this.readyEvent.fireAll();
+        }
+    };
 
-            this.firebaseValueEvent.on(fx);
-        })
+    private defaultOnAdded = async (firebaseData: any) => {
+        if (!this.isReady) return;
+
+        const data = firebaseData.val();
+        const key = firebaseData.key();
+
+        if (this.doesKeyExist(key)) return;
+
+        const high = await this.internalAddOrChange(data, key);
+
+        if (!high) {
+            return;
+        }
+
+        console.log(`${key} added`);
+        this.addedEvent.fireAll(high);
+    };
+
+    private defaultOnChanged = async (firebaseData: any) => {
+        if (!this.isReady) return;
+
+        const data = firebaseData.val();
+        const key = firebaseData.key();
+
+        if (!this.doesKeyExist(key)) {
+            return;
+        }
+
+        const high = this.internalChange(data, key);
+        this.changed().fireAll(high);
+    };
+
+    private defaultOnRemoved = async (firebaseData: any) => {
+        if (!this.isReady) return;
+
+        const key = firebaseData.key();
+
+        const high = this.internalDelete(key);
+        this.removed().fireAll(high);
+    };
+
+    public getAllAsArray() {
+        return this.all;
     }
 
     public getUrl() {
         return this.url;
     }
 
-    private async setValue(data: TLowLevel, key: string) {
-        const high = await this.highLevelFactory(data, this.campaign);
-        this.byId[key] = high;
-        return high;
-
+    private async internalAddOrChange(data: TLowLevel, key: string): Promise<THighLevel | null> {
+        return this.doesKeyExist(key)
+            ? this.internalChange(data, key)
+            : await this.internalAdd(data, key);
     }
 
-    private defaultOnValue = async (data: { [id: string]: TLowLevel }) => {
-        for (const key in data) {
-            await this.setValue(data[key], key);
+    private async internalAdd(data: TLowLevel, key: string): Promise<THighLevel> {
+        const high = await this.highLevelFactory(data, this.campaign);
+        this.idToIndex[key] = this.all.length;
+        this.all.push(high);
+        this.byId[key] = high;
+        return high;
+    }
+
+    private internalChange(data: TLowLevel, key: string): THighLevel | null {
+        const existing = this.getById(key);
+        if (!existing) return null;
+
+        existing.updateLowLevelData(data);
+        return existing;
+    }
+
+    private doesKeyExist(key: string): boolean {
+        return this.getById(key) !== undefined;
+    }
+
+    private internalDelete(key: string): THighLevel {
+        {
+            const idx = this.idToIndex[key];
+            if (typeof(idx) === "number") {
+                this.all.splice(idx, 1);
+            }
         }
-    };
 
-    private defaultOnAdded = (data: TLowLevel, key: string) => {
-        if (this.byId[key]) return;
+        const data = this.byId[key];
 
-        // TODO : uncomment me this.setValue(data, key, this.added().fireAll);
-    };
-
-    private defaultOnChanged = (data: TLowLevel, key: string) => {
-        const high = this.setValue(data, key);
-
-        /*
-            TODO : pass the before and after low level data to the changed event.
-            This requires the highlevel structure to store the lowlevel one somewhere.
-         */
-        this.changed().fireAll(high);
-    };
-
-    private deafultOnRemoved = (data: TLowLevel, key: string) => {
         delete this.byId[key];
-        this.removed().fireAll(key);
-    };
+        delete this.idToIndex[key];
 
-    public getAll(): { [id: string]: THighLevel } {
+        return data;
+    }
+
+    public getReadyPromise() {
+        return this.readyPromise;
+    }
+
+    public getAllAsTable(): { [id: string]: THighLevel } {
         return this.byId;
     }
 
@@ -362,10 +377,6 @@ class FirebaseCollection<THighLevel, TLowLevel> {
     public ready() {
         return this.readyEvent;
     }
-
-    public value() {
-        return this.valueEvent
-    };
 
     public added() {
         return this.addedEvent;
@@ -383,21 +394,40 @@ class FirebaseCollection<THighLevel, TLowLevel> {
 
 const asyncCtx = async () => {
 
-    const campaign = await Campaign.create(
+    const campaign = Campaign.create(
         "campaign-3681941-o8feH7cdthipn745_0UaEA",
         <string>process.env.ROLL20_GNTKN,
         "-LMscFSR9rEZsn74c22H");
-
 
     campaign.ready().on(() => {
         console.log("ready.");
     });
 
-    campaign.getCharacters().value().on((char: Character) => {
-        console.log("character added");
-        console.log(char.getAttributes().getAll());
+    campaign.getCharacters().added().on(async (char: Character) => {
+        campaign.say("new character added watcing for attribute changes.");
+        const attribs = char.getAttributes();
+
+        attribs.added().on(async (attrib: Attribute) => {
+            console.log(`added attrib ${attrib.getLowLevel().name}`);
+        });
+
+        attribs.removed().on(async (attrib: Attribute) => {
+            console.log(`removed attrib ${attrib.getLowLevel().name}`);
+        });
+
+        attribs.changed().on(async (attrib: Attribute) => {
+            console.log(`changed attrib ${attrib.getLowLevel().name}`);
+        });
+    });
+
+    campaign.getCharacters().changed().on(async (char: Character) => {
+        campaign.say("character changed.");
+
+    });
+
+    campaign.getCharacters().removed().on(async (char: Character) => {
+        campaign.say("character removed.");
     });
 };
 
-asyncCtx()
-    .catch(console.error);
+asyncCtx().catch(console.error);
