@@ -1,5 +1,3 @@
-import {isCaseInsensitive} from "awesome-typescript-loader/dist/helpers";
-
 const dotenv = require("dotenv");
 const fs = require("fs");
 
@@ -275,7 +273,7 @@ class Macro extends HighLevelObject<IMacroData> {
         this.visibleToArray = new HighCommaSeparatedIdArray<Player>(
             "visibleto",
             this,
-            (id: string) => campaign.getPlayers().getById(id),
+            (id: string) => campaign.players().getById(id),
             (obj: Player) => obj.getId()
         );
 
@@ -535,7 +533,7 @@ class Character extends HighLevelObject<ICharacterData> {
     private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
         super(lowLevel, campaign, fb);
 
-        const players = campaign.getPlayers();
+        const players = campaign.players();
         const getPlayerId = (obj: Player) => obj.getId();
 
         this.highTagsArray = new HighJsonIdArray(
@@ -570,7 +568,7 @@ class Character extends HighLevelObject<ICharacterData> {
             `/char-abils/char/${lowLevel.id}/`,
             CharacterAbility.fromRaw
         );
-        
+
         this.updateLowLevelData(lowLevel);
     }
 
@@ -598,7 +596,7 @@ class Character extends HighLevelObject<ICharacterData> {
         fb: Firebase_Child_T) {
 
         const char = new Character(rawData, campaign, fb);
-        
+
         await Promise.all([
             char.attribs.getReadyPromise(),
             char.abilities.getReadyPromise()
@@ -659,7 +657,7 @@ class Character extends HighLevelObject<ICharacterData> {
     }
 
     public canAccessBlobs() {
-        console.log(this.getLowLevel());
+
         const controlledBy = this.getLowLevel().controlledby || "";
         return controlledBy.includes(this.getCampaign().getCurrentPlayerId());
     }
@@ -669,13 +667,120 @@ class Character extends HighLevelObject<ICharacterData> {
     }
 }
 
+interface IChatMessageData extends IBaseLowData {
+
+    /*
+avatar: '/users/avatar/1460146/30',
+    content: 'test memz $[[0]] $[[1]]',
+    inlinerolls:
+        [ { expression: '1d8',
+            results: [Object],
+            rollid: '-LN1wm7JbKCt6H_Pryn_',
+            signature:
+                '' },
+            { expression: '5d20+5',
+                results: { resultType: 'sum',
+                    rolls: [ { dice: 1, results: [
+                        { dice: 1, results: [ { v: 13 } ], sides: 20, type: 'R' }
+                    ], sides: 8, type: 'R' } ],
+                    total: 6,
+                    type: 'V' },
+                rollid: '-LN1wm7KAn6cOcAPe15l',
+                signature:
+                    '' } ],
+    playerid: '-LLDzVWKvJl7qGUiF0m5',
+    type: 'general',
+    who: 'stormy_lmao (GM)',
+    id: '-LN1wmGJiKTQq7tobuFD' }
+    */
+
+    avatar?: string;
+    content?: string;
+    inlinerolls?: IInlineRoll[];
+    playerid?: string;
+    type?: string;
+    who?: string;
+
+}
+
+interface IInlineRoll {
+    expression?: string;
+    results?: IInlineRollResults;
+    rollid?: string;
+    signature?: string;
+}
+
+interface IInlineRollResults {
+    resultType?: string;
+    rolls?: IRollData[];
+    total?: number;
+    type?: string;
+}
+
+interface IRollData {
+    dice?: number;
+    results?: {
+        dice?: number;
+        results?: { [id: string]: number };
+        sides?: number;
+        type?: string;
+    };
+    sides?: number;
+    type?: string;
+}
+
+class ChatMessage extends HighLevelObject<IChatMessageData> {
+
+    private constructor(lowLevel: IChatMessageData, campaign: Campaign, fb: Firebase_Child_T) {
+        super(lowLevel, campaign, fb);
+        this.updateLowLevelData(lowLevel);
+    }
+
+    public getInlineRolls(): IInlineRoll[] {
+        return this.getLowLevel().inlinerolls || [];
+    }
+
+    public getAvatar(): string {
+        return this.getLowLevel().avatar || "";
+    }
+
+    public getContent(): string {
+        return this.getLowLevel().content || "";
+    }
+
+    public getPlayer(): Player | null {
+        return this.getCampaign().players().getById(this.getLowLevel().playerid);
+    }
+
+    public getType(): string {
+        return this.getLowLevel().type || "";
+    }
+
+    public getSpeakingAs(): string {
+        return this.getLowLevel().who || "";
+    }
+
+    public updateLowLevelData(newLow: IChatMessageData): void {
+        this.setNewLowLevel(newLow);
+    }
+
+    public static async fromRaw(
+        rawData: IChatMessageData,
+        campaign: Campaign,
+        fb: Firebase_Child_T) {
+        return new ChatMessage(rawData, campaign, fb);
+    }
+
+}
+
 class Campaign {
     public firebase: Firebase_T;
-    private chat: Firebase_Child_T;
+
     private playerId: string;
 
-    private characters: FirebaseCollection<Character, ICharacterData>;
-    private players: FirebaseCollection<Player, IPlayerData>;
+    private characterCollectin: FirebaseCollection<Character, ICharacterData>;
+    private playerCollection: FirebaseCollection<Player, IPlayerData>;
+    private chatMessages: FirebaseCollection<ChatMessage, IChatMessageData>;
 
     private readyEvent: FunctionPool<() => void> = new FunctionPool();
     private ourPlayer: Player | null;
@@ -686,23 +791,30 @@ class Campaign {
         this.firebase.authWithCustomToken(gntkn);
         this.playerId = playerId;
 
-        this.chat = this.firebase.child("/chat/");
+        this.chatMessages = this.firebase.child("/chat/");
 
-        this.characters = new FirebaseCollection<Character, ICharacterData>(
+        this.characterCollectin = new FirebaseCollection<Character, ICharacterData>(
             this,
             "/characters/",
             Character.fromRaw
         );
 
-        this.players = new FirebaseCollection<Player, IPlayerData>(
+        this.playerCollection = new FirebaseCollection<Player, IPlayerData>(
             this,
             "/players/",
             Player.fromRaw
         );
 
+        this.chatMessages = new FirebaseCollection<ChatMessage, IChatMessageData>(
+            this,
+            "/chat/",
+            ChatMessage.fromRaw
+        );
+
         Promise.all([
-            this.characters.getReadyPromise(),
-            this.players.getReadyPromise()
+            this.characterCollectin.getReadyPromise(),
+            this.playerCollection.getReadyPromise(),
+            this.chatMessages.getReadyPromise()
         ])
             .then(() => {
                 this.readyEvent.fireAll();
@@ -715,7 +827,7 @@ class Campaign {
 
     public getCurrentPlayer(): Player {
         if (!this.ourPlayer) {
-            this.ourPlayer = this.getPlayers().getById(this.playerId);
+            this.ourPlayer = this.players().getById(this.playerId);
         }
 
         if (!this.ourPlayer) {
@@ -731,12 +843,16 @@ class Campaign {
         return this.firebase;
     }
 
-    public getCharacters() {
-        return this.characters;
+    public characters() {
+        return this.characterCollectin;
     }
 
-    public getPlayers() {
-        return this.players;
+    public players() {
+        return this.playerCollection;
+    }
+
+    public chat() {
+        return this.chatMessages;
     }
 
     public ready() {
@@ -744,10 +860,11 @@ class Campaign {
     }
 
     public say(content: string, who: string = "not a bot", type: string = "general") {
-        const key = this.chat.push().key();
+        const key = this.chatMessages.getFirebase().push().key();
+
         // @ts-ignore
         const priority = Firebase.ServerValue.TIMESTAMP;
-        this.chat.child(key).setWithPriority({
+        this.chatMessages.getFirebase().child(key).setWithPriority({
             content,
             playerid: this.playerId,
             who,
@@ -894,7 +1011,7 @@ class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBase
     private idToIndex: { [id: string]: number } = {};
     private all: THigh[] = [];
 
-    private createPromisesResolves: {[id: string]: (data: THigh) => void} = {};
+    private createPromisesResolves: { [id: string]: (data: THigh) => void } = {};
 
     private highLevelFactory: (a: TLow, b: Campaign, fb: Firebase_Child_T) => Promise<THigh>;
 
@@ -914,8 +1031,8 @@ class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBase
 
         return new Promise((ok, err) => {
 
-            this.getFirebase().child(key).setWithPriority(low, priority, (e: any)=> {
-                if(e) {
+            this.getFirebase().child(key).setWithPriority(low, priority, (e: any) => {
+                if (e) {
                     err(e);
                 }
             });
@@ -925,6 +1042,8 @@ class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBase
     }
 
     private static deconstructFirebaseData(firebaseData: any) {
+
+
         return {
             data: firebaseData.val(),
             key: firebaseData.key()
@@ -960,12 +1079,11 @@ class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBase
 
         {
             const promiseResolve = this.createPromisesResolves[key];
-            if(promiseResolve) {
+            if (promiseResolve) {
                 promiseResolve(high);
             }
         }
 
-        console.log(`${key} added`);
         this.added().fireAll(high);
     };
 
@@ -1002,6 +1120,11 @@ class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBase
     }
 
     private async internalAdd(data: TLow, key: string, fb: Firebase_Child_T): Promise<THigh> {
+
+        if (!data.id) {
+            data.id = key;
+        }
+
         const high = await this.highLevelFactory(data, this.getCampaign(), fb);
 
         this.idToIndex[key] = this.all.length;
@@ -1044,7 +1167,9 @@ class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBase
         return this.byId;
     }
 
-    public getById = (id: string): THigh | null => {
+    public getById = (id: string | null | undefined): THigh | null => {
+        if (!id) return null;
+
         return this.byId[id];
     }
 }
@@ -1058,11 +1183,21 @@ const asyncCtx = async () => {
 
     campaign.ready().on(async () => {
         console.log("ready.");
-
-        const char = await campaign.getCharacters().create();
-        char.setName("test char");
     });
 
+    campaign.chat().added().on(async (msg: ChatMessage) => {
+
+        // @ts-ignore
+        console.log(`Chat: [${msg.getSpeakingAs()} (${msg.getPlayer().getDisplayName()})] ${msg.getContent()}`)
+
+        const content = msg.getContent();
+        if(content.startsWith("!ping")) {
+            campaign.say(`pong ${content.substring("!ping".length)}`);
+        }
+
+    });
+
+    /*
     campaign.getCharacters().added().on(async (char: Character) => {
         campaign.say("new character added");
     });
@@ -1082,6 +1217,7 @@ const asyncCtx = async () => {
         const me = campaign.getCurrentPlayer();
         me.setArbitrary("displayname", "stormy modififed");
     });
+    */
 
 };
 
