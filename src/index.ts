@@ -894,11 +894,34 @@ class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBase
     private idToIndex: { [id: string]: number } = {};
     private all: THigh[] = [];
 
+    private createPromisesResolves: {[id: string]: (data: THigh) => void} = {};
+
     private highLevelFactory: (a: TLow, b: Campaign, fb: Firebase_Child_T) => Promise<THigh>;
 
     public constructor(campaign: Campaign, url: string, factory: (a: TLow, b: Campaign, fb: Firebase_Child_T) => Promise<THigh>) {
         super(campaign, url);
         this.highLevelFactory = factory;
+    }
+
+    public create(): Promise<THigh> {
+        // @ts-ignore
+        const priority = Firebase.ServerValue.TIMESTAMP;
+        const key = this.getFirebase().push().key();
+
+        const low: IBaseLowData = {
+            id: key
+        };
+
+        return new Promise((ok, err) => {
+
+            this.getFirebase().child(key).setWithPriority(low, priority, (e: any)=> {
+                if(e) {
+                    err(e);
+                }
+            });
+
+            this.createPromisesResolves[key] = ok;
+        });
     }
 
     private static deconstructFirebaseData(firebaseData: any) {
@@ -933,6 +956,13 @@ class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBase
 
         if (!high) {
             return;
+        }
+
+        {
+            const promiseResolve = this.createPromisesResolves[key];
+            if(promiseResolve) {
+                promiseResolve(high);
+            }
         }
 
         console.log(`${key} added`);
@@ -1026,13 +1056,11 @@ const asyncCtx = async () => {
         <string>process.env.ROLL20_GNTKN,
         "-LMscFSR9rEZsn74c22H");
 
-    campaign.ready().on(() => {
+    campaign.ready().on(async () => {
         console.log("ready.");
 
-        const chars = campaign.getCharacters().getAllAsArray();
-        for(const char of chars) {
-            console.log(`${char.getName()} ${char.getTags().getLocalValues().join(" ")}`);
-        }
+        const char = await campaign.getCharacters().create();
+        char.setName("test char");
     });
 
     campaign.getCharacters().added().on(async (char: Character) => {
