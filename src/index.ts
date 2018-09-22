@@ -1,3 +1,5 @@
+import {isCaseInsensitive} from "awesome-typescript-loader/dist/helpers";
+
 const dotenv = require("dotenv");
 const fs = require("fs");
 
@@ -13,9 +15,13 @@ require("firebase");
 type Firebase_T = any;
 type Firebase_Child_T = any;
 
+interface IBaseLowData {
+    id: string;
+}
+
 // TODO : import these from roll20.d.ts
 
-abstract class HighLevelObject<TLow> {
+abstract class HighLevelObject<TLow extends IBaseLowData> {
     private lowLevel: TLow;
     private previousLowLevel: TLow | null = null;
     private campaign: Campaign;
@@ -24,8 +30,10 @@ abstract class HighLevelObject<TLow> {
     public constructor(lowLevel: TLow, campaign: Campaign, fb: Firebase_Child_T) {
         this.campaign = campaign;
         this.firebase = fb;
+    }
 
-        this.updateLowLevelData(lowLevel);
+    public getId() {
+        return this.getLowLevel().id;
     }
 
     public getFirebase() {
@@ -61,14 +69,19 @@ abstract class HighLevelObject<TLow> {
 }
 
 
-interface IAttributeData {
-    id?: string;
+interface IAttributeData extends IBaseLowData {
     name?: string;
     current?: string;
     max?: string;
 }
 
 class Attribute extends HighLevelObject<IAttributeData> {
+
+    private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
+        super(lowLevel, campaign, fb);
+        this.updateLowLevelData(lowLevel);
+    }
+
     public static async fromRaw(rawData: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
         return new Attribute(rawData, campaign, fb);
     }
@@ -76,37 +89,203 @@ class Attribute extends HighLevelObject<IAttributeData> {
     public updateLowLevelData(newLow: IAttributeData): void {
         this.setNewLowLevel(newLow);
     }
+
+    public getName() {
+        return this.getLowLevel().name || "";
+    }
+
+    public setName(name: string) {
+        this.setArbitrary("name", name);
+    }
+
+    public getCurrentValue() {
+        return this.getLowLevel().current || "";
+    }
+
+    public setCurrentValue(current: string) {
+        this.setArbitrary("current", current);
+    }
+
+    public getMaxValue() {
+        return this.getLowLevel().max || "";
+    }
+
+    public setMaxValue(max: string) {
+        this.setArbitrary("max", max);
+    }
 }
 
-interface IMacroData {
-    action: string;
-    id: string;
+interface IMacroData extends IBaseLowData {
+    action?: string;
     istokenaction: boolean;
     name: string;
     visibleto: string; //comma separated ids
 }
 
-const commaSeparatedToArray = <T extends HighLevelObject<TLow>, TLow>(container: FirebaseCollection<T, TLow>, commaSeparated: string): T[] => {
-    const ids = commaSeparated.split(',');
-    const retval = [];
+interface IHighArray<THigh> {
+    invalidateCache(): void;
 
-    for (const id of ids) {
+    tryRepopulate(): void
 
-        const obj = container.getById(id);
-        if (obj) {
-            retval.push(obj);
+    getLocalValues(): THigh[];
+
+    add(obj: THigh): boolean;
+
+    remove(obj: THigh): boolean;
+}
+
+// TODO : expose added, removed events for this array wrapper
+abstract class HighArrayCommon<THigh>
+    implements IHighArray<THigh> {
+
+    protected highCache: THigh[];
+    protected lowCache: string[];
+
+    protected dataName: string;
+    protected parent: HighLevelObject<any>;
+    protected isCacheValid: boolean = false;
+
+    protected dataSelector: (obj: THigh) => string;
+    protected lowToHigh: (obj: string) => THigh | null;
+
+    public constructor(
+        dataName: string,
+        parent: HighLevelObject<any>,
+        lowToHigh: (obj: string) => THigh | null,
+        dataSelector: (obj: THigh) => string) {
+
+        this.dataSelector = dataSelector;
+        this.dataName = dataName;
+        this.parent = parent;
+        this.lowToHigh = lowToHigh;
+    }
+
+    protected abstract getSyncData(): any;
+
+    protected abstract internalTryRepopulateWith(rawData: string): void;
+
+    private sync() {
+        const data = this.getSyncData();
+        this.parent.setArbitrary(this.dataName, data);
+    }
+
+    public add(obj: THigh) {
+        const data = this.dataSelector(obj);
+
+        this.lowCache.push(data);
+        this.highCache.push(obj);
+
+        this.sync();
+
+        // TODO : uniqueness?
+        return true;
+    }
+
+    public remove(obj: THigh) {
+        let wasRemoved = false;
+        const objId = this.dataSelector(obj);
+        let idx = this.lowCache.length;
+
+        while (idx-- > 0) {
+            const lowCacheId = this.lowCache[idx];
+
+            if (lowCacheId === objId) {
+                // no need to update local cache since we're going to reparse new data after syncing anyway
+                wasRemoved = true;
+            }
         }
 
+        this.sync();
+
+        return wasRemoved;
     }
-    return retval;
-};
+
+    public getLocalValues(): THigh[] {
+        return this.highCache;
+    }
+
+    public invalidateCache(): void {
+        this.isCacheValid = false;
+    }
+
+
+    public tryRepopulate(): void {
+        const data = this.parent.getArbitrary(this.dataName);
+        if (!data) return;
+
+        if (this.isCacheValid) return;
+        this.isCacheValid = true;
+
+        this.internalTryRepopulateWith(data);
+    }
+}
+
+class HighJsonIdArray<THigh>
+    extends HighArrayCommon<THigh> {
+
+    protected internalTryRepopulateWith(rawData: string): void {
+        let data = [];
+        try {
+            data = JSON.parse(rawData);
+        } catch (err) {
+            console.log(`Failed to parse json id array data ${err}`);
+        }
+
+        this.lowCache = this.highCache = data;
+    }
+
+    protected getSyncData(): any {
+        return JSON.stringify(this.lowCache);
+    }
+}
+
+class HighCommaSeparatedIdArray<THigh>
+    extends HighArrayCommon<THigh> {
+
+    protected internalTryRepopulateWith(rawData: string): void {
+        this.highCache = [];
+        this.lowCache = [];
+
+        this.lowCache = rawData.split(',');
+
+        for (const id of this.lowCache) {
+
+            const obj = this.lowToHigh(id);
+
+            if (obj) {
+                this.highCache.push(obj);
+            } else {
+                console.log(`lowToHigh returned null for data ${id}`);
+            }
+        }
+    }
+
+    protected getSyncData(): any {
+        return this.lowCache.join(',');
+    }
+}
 
 class Macro extends HighLevelObject<IMacroData> {
 
-    private visibleTo: Player[] | null = null;
+    private visibleToArray: IHighArray<Player>;
+
+    private constructor(lowLevel: IMacroData, campaign: Campaign, fb: Firebase_Child_T) {
+        super(lowLevel, campaign, fb);
+
+        this.visibleToArray = new HighCommaSeparatedIdArray<Player>(
+            "visibleto",
+            this,
+            (id: string) => campaign.getPlayers().getById(id),
+            (obj: Player) => obj.getId()
+        );
+
+        this.updateLowLevelData(lowLevel);
+    }
 
     public updateLowLevelData(newLow: IMacroData): void {
         this.setNewLowLevel(newLow);
+
+        this.visibleToArray.invalidateCache();
     }
 
     public static async fromRaw(
@@ -121,33 +300,40 @@ class Macro extends HighLevelObject<IMacroData> {
         return this.getLowLevel().action;
     }
 
+    public setAction(action: string) {
+        this.setArbitrary("action", action);
+    }
+
     public isTokenAction() {
         return this.getLowLevel().istokenaction;
+    }
+
+    public setIsTokenAction(state: boolean) {
+        this.setArbitrary("istokenaction", state);
     }
 
     public getName() {
         return this.getLowLevel().name;
     }
 
-    public getVisibleTo(): Player[] {
-        if (!this.visibleTo) {
-            this.visibleTo = commaSeparatedToArray(this.getCampaign().getPlayers(), this.getLowLevel().visibleto);
-        }
+    public setName(name: string) {
+        this.setArbitrary("name", name);
+    }
 
-        return this.visibleTo;
+    public visibleTo() {
+        this.visibleToArray.tryRepopulate();
+        return this.visibleToArray;
     }
 }
 
-interface IPlayerData {
-    id?: string;
+interface IPlayerData extends IBaseLowData {
     color?: string;
     d20userid?: string;
     d20username?: string;
     displayname?: string;
     online?: boolean;
     speakingas?: string;
-    advShortcuts?: boolean;
-    // @NO-API
+    advShortcuts?: boolean; // @NO-API
     adv_fow_revealed?: string; // @NO-API
     alphatokenactions?: boolean; // @NO-API
     apptddiceenabled?: boolean; // @NO-API
@@ -177,6 +363,18 @@ interface IPlayerData {
 class Player extends HighLevelObject<IPlayerData> {
     private macros: FirebaseCollection<Macro, IMacroData>;
 
+    private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
+        super(lowLevel, campaign, fb);
+
+        this.macros = new FirebaseCollection(
+            campaign,
+            `/macros/player/${lowLevel.id}/`,
+            Macro.fromRaw
+        );
+
+        this.updateLowLevelData(lowLevel);
+    }
+
     public updateLowLevelData(newLow: IPlayerData): void {
         this.setNewLowLevel(newLow);
     }
@@ -187,15 +385,7 @@ class Player extends HighLevelObject<IPlayerData> {
         fb: Firebase_Child_T) {
 
         const player = new Player(rawData, campaign, fb);
-
-        player.macros = new FirebaseCollection(
-            campaign,
-            `/macros/player/${rawData.id}/`,
-            Macro.fromRaw
-        );
-
         await player.macros.getReadyPromise();
-
         return player;
     }
 
@@ -203,45 +393,123 @@ class Player extends HighLevelObject<IPlayerData> {
         return this.getLowLevel().color || "";
     }
 
+    public setColor(color: string) {
+        this.setArbitrary("color", color);
+    }
+
     public getUserId(): string {
         return this.getLowLevel().d20userid || ""
+    }
+
+    public setUserId(id: string) {
+        this.setArbitrary("d20userid", id);
     }
 
     public getUsername(): string {
         return this.getLowLevel().d20username || "";
     }
 
+    public setUsername(username: string) {
+        this.setArbitrary("d20username", username);
+    }
+
     public getDisplayName(): string {
         return this.getLowLevel().displayname || "";
+    }
+
+    public setDisplayName(displayName: string) {
+        this.setArbitrary("displayname", displayName);
     }
 
     public isOnline(): boolean {
         return this.getLowLevel().online || false;
     }
 
+    public setIsOnline(state: boolean) {
+        this.setArbitrary("online", state);
+    }
+
     public getSpeakingAs(): string {
         return this.getLowLevel().speakingas || "";
     }
-}
 
-interface ICharacterAbilityData {
-
-}
-
-class CharacterAbility extends HighLevelObject<ICharacterAbilityData> {
-    public updateLowLevelData(newLow: ICharacterAbilityData): void {
-        this.setNewLowLevel(newLow);
+    public setSpeakingAs(speakingAs: string) {
+        this.setArbitrary("speakingas", speakingAs);
     }
 }
 
-interface ICharacterData {
+interface ICharacterAbilityData extends IBaseLowData {
+    action?: string;
+    description?: string;
+    istokenaction?: boolean;
+    name?: string;
+    order?: number;
+}
+
+class CharacterAbility extends HighLevelObject<ICharacterAbilityData> {
+
+    private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
+        super(lowLevel, campaign, fb);
+        this.updateLowLevelData(lowLevel);
+    }
+
+    public static async fromRaw(rawData: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
+        return new CharacterAbility(rawData, campaign, fb);
+    }
+
+    public updateLowLevelData(newLow: ICharacterAbilityData): void {
+        this.setNewLowLevel(newLow);
+    }
+
+    public getAction() {
+        return this.getLowLevel().action;
+    }
+
+    public setAction(action: string) {
+        this.setArbitrary("action", action);
+    }
+
+    public getDescription() {
+        return this.getLowLevel().description;
+    }
+
+    public setDescription(desc: string) {
+        this.setArbitrary("description", desc);
+    }
+
+    public getIsTokenAction() {
+        return this.getLowLevel().istokenaction;
+    }
+
+    public setIsTokenAction(state: boolean) {
+        this.setArbitrary("istokenaction", state);
+    }
+
+    public getName() {
+        return this.getLowLevel().name;
+    }
+
+    public setName(name: string) {
+        this.setArbitrary("name", name);
+    }
+
+    public getOrder() {
+        return this.getLowLevel().order;
+    }
+
+    public setOrder(order: number) {
+        this.setArbitrary("order", order);
+    }
+}
+
+
+interface ICharacterData extends IBaseLowData {
     name?: string;
     avatar?: string;
     tags?: string;
     controlledby?: string;
     inplayerjournals?: string;
     defaulttoken?: number | string; // string if null, and the number value is a unix timestamp
-    id?: string;
     bio?: string | number; // string if null, and the number value is a unix timestamp
     gmnotes?: string | number; // string if null, and the number value is a unix timestamp
     archived?: boolean;
@@ -254,31 +522,89 @@ interface ICharacterData {
 class Character extends HighLevelObject<ICharacterData> {
 
     private attribs: FirebaseCollection<Attribute, IAttributeData>;
+    private abilities: FirebaseCollection<CharacterAbility, ICharacterAbilityData>;
 
-    private tagsArray: string[] | null;
-    private controlledBy: (Player | null)[] | null;
-    private inJournals: (Player | null)[] | null;
+    private highTagsArray: IHighArray<string>;
+    private highControlledBy: IHighArray<Player>;
+    private highInJournals: IHighArray<Player>;
 
     private bioBlob: FirebaseVar<string> | null;
     private gmNotesBlob: FirebaseVar<string> | null;
     private defaultTokenBlob: FirebaseVar<any> | null; // TODO : parse type
 
+    private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
+        super(lowLevel, campaign, fb);
+
+        const players = campaign.getPlayers();
+        const getPlayerId = (obj: Player) => obj.getId();
+
+        this.highTagsArray = new HighJsonIdArray(
+            "tags",
+            this,
+            (obj: string): string | null => obj,
+            (obj: string) => obj
+        );
+
+        this.highControlledBy = new HighCommaSeparatedIdArray(
+            "controlledby",
+            this,
+            players.getById,
+            getPlayerId
+        );
+
+        this.highInJournals = new HighCommaSeparatedIdArray(
+            "inplayerjournals",
+            this,
+            players.getById,
+            getPlayerId
+        );
+
+        this.attribs = new FirebaseCollection(
+            campaign,
+            `/char-attribs/char/${lowLevel.id}/`,
+            Attribute.fromRaw
+        );
+
+        this.abilities = new FirebaseCollection(
+            campaign,
+            `/char-abils/char/${lowLevel.id}/`,
+            CharacterAbility.fromRaw
+        );
+        
+        this.updateLowLevelData(lowLevel);
+    }
+
     public updateLowLevelData(newLow: ICharacterData): void {
         this.setNewLowLevel(newLow);
 
-        this.tagsArray = null;
-        this.controlledBy = null;
-        this.inJournals = null;
+        this.highTagsArray.invalidateCache();
+        this.highControlledBy.invalidateCache();
+        this.highInJournals.invalidateCache();
 
         if (this.canAccessBlobs()) {
-            if(!this.bioBlob) this.bioBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/bio/`, (d: string) => Promise.resolve(d));
-            if(!this.gmNotesBlob) this.gmNotesBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/gmnotes/`, (d: string) => Promise.resolve(d));
-            if(!this.defaultTokenBlob) this.defaultTokenBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/defaulttoken/`, (d: string) => Promise.resolve(d));
+            if (!this.bioBlob) this.bioBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/bio/`, (d: string) => Promise.resolve(d));
+            if (!this.gmNotesBlob) this.gmNotesBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/gmnotes/`, (d: string) => Promise.resolve(d));
+            if (!this.defaultTokenBlob) this.defaultTokenBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/defaulttoken/`, (d: string) => Promise.resolve(d));
         } else {
             this.bioBlob = null;
             this.gmNotesBlob = null;
             this.defaultTokenBlob = null
         }
+    }
+
+    public static async fromRaw(
+        rawData: ICharacterData,
+        campaign: Campaign,
+        fb: Firebase_Child_T) {
+
+        const char = new Character(rawData, campaign, fb);
+        
+        await Promise.all([
+            char.attribs.getReadyPromise(),
+            char.abilities.getReadyPromise()
+        ]);
+
+        return char;
     }
 
     public getBioBlob(): FirebaseVar<string> | null {
@@ -293,45 +619,19 @@ class Character extends HighLevelObject<ICharacterData> {
         return this.gmNotesBlob;
     }
 
-    public getName(): string {
-        return this.getLowLevel().name || "";
+    public getControlledBy(): IHighArray<Player> {
+        this.highControlledBy.tryRepopulate();
+        return this.highControlledBy;
     }
 
-    public getAvatarUrl(): string {
-        return this.getLowLevel().avatar || "";
+    public getInPlayersJournals(): IHighArray<Player> {
+        this.highInJournals.tryRepopulate();
+        return this.highInJournals;
     }
 
-    public getControlledBy(): (Player | null)[] {
-        if (!this.controlledBy) {
-            this.controlledBy = commaSeparatedToArray(this.getCampaign().getPlayers(), this.getLowLevel().controlledby || "");
-        }
-
-        return this.controlledBy;
-    }
-
-    public getInPlayersJournals(): (Player | null)[] {
-        if (!this.inJournals) {
-            this.inJournals = commaSeparatedToArray(this.getCampaign().getPlayers(), this.getLowLevel().inplayerjournals  || "");
-        }
-
-        return this.inJournals;
-    }
-
-    public getTags(): string[] {
-        if (!this.tagsArray) {
-            try {
-                this.tagsArray = JSON.parse(this.getLowLevel().tags || "");
-            } catch (err) {
-                console.log(`Failed parsing tags for ${this.getId()}`);
-                this.tagsArray = [];
-            }
-
-            if (!Array.isArray(this.tagsArray)) {
-                this.tagsArray = [];
-            }
-        }
-
-        return this.tagsArray;
+    public getTags(): IHighArray<string> {
+        this.highTagsArray.tryRepopulate();
+        return this.highTagsArray;
     }
 
     public getId(): string {
@@ -342,24 +642,20 @@ class Character extends HighLevelObject<ICharacterData> {
         return this.getLowLevel().archived || false
     }
 
-    public static async fromRaw(
-        rawData: ICharacterData,
-        campaign: Campaign,
-        fb: Firebase_Child_T) {
+    public getName(): string {
+        return this.getLowLevel().name || "";
+    }
 
-        const char = new Character(rawData, campaign, fb);
+    public setName(name: string) {
+        this.setArbitrary("name", name);
+    }
 
-        char.attribs = new FirebaseCollection(
-            campaign,
-            `/char-attribs/char/${rawData.id}/`,
-            Attribute.fromRaw
-        );
+    public getAvatarURL(): string {
+        return this.getLowLevel().avatar || "";
+    }
 
-        await Promise.all([
-            char.attribs.getReadyPromise()
-        ]);
-
-        return char;
+    public setAvatarURL(url: string) {
+        this.setArbitrary("avatar", url);
     }
 
     public canAccessBlobs() {
@@ -593,7 +889,7 @@ class FirebaseVar<THigh> extends FirebaseCommon<THigh, string, string> {
     }
 }
 
-class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow> extends FirebaseCommon<THigh, TLow, { [id: string]: TLow }> {
+class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBaseLowData> extends FirebaseCommon<THigh, TLow, { [id: string]: TLow }> {
     private byId: { [id: string]: THigh } = {};
     private idToIndex: { [id: string]: number } = {};
     private all: THigh[] = [];
@@ -718,11 +1014,10 @@ class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow> extends Fire
         return this.byId;
     }
 
-    public getById(id: string): THigh | null {
+    public getById = (id: string): THigh | null => {
         return this.byId[id];
     }
 }
-
 
 const asyncCtx = async () => {
 
@@ -733,23 +1028,15 @@ const asyncCtx = async () => {
 
     campaign.ready().on(() => {
         console.log("ready.");
+
+        const chars = campaign.getCharacters().getAllAsArray();
+        for(const char of chars) {
+            console.log(`${char.getName()} ${char.getTags().getLocalValues().join(" ")}`);
+        }
     });
 
     campaign.getCharacters().added().on(async (char: Character) => {
-        campaign.say("new character added watcing for attribute changes.");
-        const attribs = char.getAttributes();
-
-        attribs.added().on(async (attrib: Attribute) => {
-            console.log(`added attrib ${attrib.getLowLevel().name}`);
-        });
-
-        attribs.removed().on(async (attrib: Attribute) => {
-            console.log(`removed attrib ${attrib.getLowLevel().name}`);
-        });
-
-        attribs.changed().on(async (attrib: Attribute) => {
-            console.log(`changed attrib ${attrib.getLowLevel().name}`);
-        });
+        campaign.say("new character added");
     });
 
     campaign.getCharacters().changed().on(async (char: Character) => {
