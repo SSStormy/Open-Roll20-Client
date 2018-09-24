@@ -1,25 +1,15 @@
-const dotenv = require("dotenv");
-const fs = require("fs");
-
 require("firebase");
 
-{
-    const cfg = dotenv.parse(fs.readFileSync(".env.gntkn"));
-    for (const key in cfg) {
-        process.env[key] = cfg[key];
-    }
-}
+export type Firebase_T = any;
+export type Firebase_Child_T = any;
 
-type Firebase_T = any;
-type Firebase_Child_T = any;
-
-interface IBaseLowData {
+export interface IBaseLowData {
     id: string;
 }
 
 // TODO : import these from roll20.d.ts
 
-abstract class HighLevelObject<TLow extends IBaseLowData> {
+export abstract class HighLevelObject<TLow extends IBaseLowData> {
     private lowLevel: TLow;
     private previousLowLevel: TLow | null = null;
     private campaign: Campaign;
@@ -67,13 +57,13 @@ abstract class HighLevelObject<TLow extends IBaseLowData> {
 }
 
 
-interface IAttributeData extends IBaseLowData {
+export interface IAttributeData extends IBaseLowData {
     name?: string;
     current?: string;
     max?: string;
 }
 
-class Attribute extends HighLevelObject<IAttributeData> {
+export class Attribute extends HighLevelObject<IAttributeData> {
 
     private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
         super(lowLevel, campaign, fb);
@@ -113,14 +103,14 @@ class Attribute extends HighLevelObject<IAttributeData> {
     }
 }
 
-interface IMacroData extends IBaseLowData {
+export interface IMacroData extends IBaseLowData {
     action?: string;
     istokenaction: boolean;
     name: string;
     visibleto: string; //comma separated ids
 }
 
-interface IHighArray<THigh> {
+export interface IHighArray<THigh> {
     invalidateCache(): void;
 
     tryRepopulate(): void
@@ -133,7 +123,7 @@ interface IHighArray<THigh> {
 }
 
 // TODO : expose added, removed events for this array wrapper
-abstract class HighArrayCommon<THigh>
+export abstract class HighArrayCommon<THigh>
     implements IHighArray<THigh> {
 
     protected highCache: THigh[];
@@ -218,7 +208,7 @@ abstract class HighArrayCommon<THigh>
     }
 }
 
-class HighJsonIdArray<THigh>
+export class HighJsonIdArray<THigh>
     extends HighArrayCommon<THigh> {
 
     protected internalTryRepopulateWith(rawData: string): void {
@@ -237,7 +227,7 @@ class HighJsonIdArray<THigh>
     }
 }
 
-class HighCommaSeparatedIdArray<THigh>
+export class HighCommaSeparatedIdArray<THigh>
     extends HighArrayCommon<THigh> {
 
     protected internalTryRepopulateWith(rawData: string): void {
@@ -263,7 +253,7 @@ class HighCommaSeparatedIdArray<THigh>
     }
 }
 
-class Macro extends HighLevelObject<IMacroData> {
+export class Macro extends HighLevelObject<IMacroData> {
 
     private visibleToArray: IHighArray<Player>;
 
@@ -324,7 +314,7 @@ class Macro extends HighLevelObject<IMacroData> {
     }
 }
 
-interface IPlayerData extends IBaseLowData {
+export interface IPlayerData extends IBaseLowData {
     color?: string;
     d20userid?: string;
     d20username?: string;
@@ -358,7 +348,7 @@ interface IPlayerData extends IBaseLowData {
     videoreceivetype?: string; // @NO-API
 }
 
-class Player extends HighLevelObject<IPlayerData> {
+export class Player extends HighLevelObject<IPlayerData> {
     private macros: FirebaseCollection<Macro, IMacroData>;
 
     private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
@@ -436,7 +426,7 @@ class Player extends HighLevelObject<IPlayerData> {
     }
 }
 
-interface ICharacterAbilityData extends IBaseLowData {
+export interface ICharacterAbilityData extends IBaseLowData {
     action?: string;
     description?: string;
     istokenaction?: boolean;
@@ -444,7 +434,7 @@ interface ICharacterAbilityData extends IBaseLowData {
     order?: number;
 }
 
-class CharacterAbility extends HighLevelObject<ICharacterAbilityData> {
+export class CharacterAbility extends HighLevelObject<ICharacterAbilityData> {
 
     private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
         super(lowLevel, campaign, fb);
@@ -501,7 +491,7 @@ class CharacterAbility extends HighLevelObject<ICharacterAbilityData> {
 }
 
 
-interface ICharacterData extends IBaseLowData {
+export interface ICharacterData extends IBaseLowData {
     name?: string;
     avatar?: string;
     tags?: string;
@@ -517,7 +507,7 @@ interface ICharacterData extends IBaseLowData {
     abilorder?: string; // @NO-API
 }
 
-class Character extends HighLevelObject<ICharacterData> {
+export class Character extends HighLevelObject<ICharacterData> {
 
     private attribs: FirebaseCollection<Attribute, IAttributeData>;
     private abilities: FirebaseCollection<CharacterAbility, ICharacterAbilityData>;
@@ -667,7 +657,7 @@ class Character extends HighLevelObject<ICharacterData> {
     }
 }
 
-interface IChatMessageData extends IBaseLowData {
+export interface IChatMessageData extends IBaseLowData {
 
     /*
 avatar: '/users/avatar/1460146/30',
@@ -703,21 +693,21 @@ avatar: '/users/avatar/1460146/30',
 
 }
 
-interface IInlineRoll {
+export interface IInlineRoll {
     expression?: string;
     results?: IInlineRollResults;
     rollid?: string;
     signature?: string;
 }
 
-interface IInlineRollResults {
+export interface IInlineRollResults {
     resultType?: string;
     rolls?: IRollData[];
     total?: number;
     type?: string;
 }
 
-interface IRollData {
+export interface IRollData {
     dice?: number;
     results?: {
         dice?: number;
@@ -729,7 +719,7 @@ interface IRollData {
     type?: string;
 }
 
-class ChatMessage extends HighLevelObject<IChatMessageData> {
+export class ChatMessage extends HighLevelObject<IChatMessageData> {
 
     private constructor(lowLevel: IChatMessageData, campaign: Campaign, fb: Firebase_Child_T) {
         super(lowLevel, campaign, fb);
@@ -773,7 +763,7 @@ class ChatMessage extends HighLevelObject<IChatMessageData> {
 
 }
 
-class Campaign {
+export class Campaign {
     public firebase: Firebase_T;
 
     private playerId: string;
@@ -873,7 +863,7 @@ class Campaign {
     }
 }
 
-class FunctionPool<T> {
+export class FunctionPool<T> {
     private fxList: T[];
 
     constructor() {
@@ -903,7 +893,7 @@ class FunctionPool<T> {
     }
 }
 
-abstract class FirebaseCommon<THigh, TLow, TInitial> {
+export abstract class FirebaseCommon<THigh, TLow, TInitial> {
     private campaign: Campaign;
     private url: string;
     private firebase: Firebase_Child_T;
@@ -982,7 +972,7 @@ abstract class FirebaseCommon<THigh, TLow, TInitial> {
     }
 }
 
-class FirebaseVar<THigh> extends FirebaseCommon<THigh, string, string> {
+export class FirebaseVar<THigh> extends FirebaseCommon<THigh, string, string> {
 
     private cache: THigh | null = null;
 
@@ -1006,7 +996,7 @@ class FirebaseVar<THigh> extends FirebaseCommon<THigh, string, string> {
     }
 }
 
-class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBaseLowData> extends FirebaseCommon<THigh, TLow, { [id: string]: TLow }> {
+export class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBaseLowData> extends FirebaseCommon<THigh, TLow, { [id: string]: TLow }> {
     private byId: { [id: string]: THigh } = {};
     private idToIndex: { [id: string]: number } = {};
     private all: THigh[] = [];
@@ -1174,53 +1164,5 @@ class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBase
     }
 }
 
-const asyncCtx = async () => {
 
-    const campaign = new Campaign(
-        "campaign-3681941-o8feH7cdthipn745_0UaEA",
-        <string>process.env.ROLL20_GNTKN,
-        "-LMscFSR9rEZsn74c22H");
 
-    campaign.ready().on(async () => {
-        console.log("ready.");
-    });
-
-    campaign.chat().added().on(async (msg: ChatMessage) => {
-console.log(msg.getLowLevel());
-
-        // @ts-ignore
-        // TODO: chat buttons !attackroll &#64;{target|token_id} &#91;[1d6+&#63;{Bonus|0}]&#93;
-        console.log(`Chat: [${msg.getSpeakingAs()} (${msg.getPlayer().getDisplayName()})] ${msg.getContent()}`)
-
-        const content = msg.getContent();
-        if(content.startsWith("!ping")) {
-            campaign.say(`pong ${content.substring("!ping".length)}`);
-        }
-
-    });
-
-    /*
-    campaign.getCharacters().added().on(async (char: Character) => {
-        campaign.say("new character added");
-    });
-
-    campaign.getCharacters().changed().on(async (char: Character) => {
-        campaign.say("character changed.");
-
-    });
-
-    campaign.getCharacters().removed().on(async (char: Character) => {
-        campaign.say("character removed.");
-    });
-
-    const playersStorage = campaign.getPlayers();
-
-    playersStorage.ready().on(async () => {
-        const me = campaign.getCurrentPlayer();
-        me.setArbitrary("displayname", "stormy modififed");
-    });
-    */
-
-};
-
-asyncCtx().catch(console.error);
