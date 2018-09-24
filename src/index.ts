@@ -1186,8 +1186,10 @@ const asyncCtx = async () => {
     });
 
     campaign.chat().added().on(async (msg: ChatMessage) => {
+console.log(msg.getLowLevel());
 
         // @ts-ignore
+        // TODO: chat buttons !attackroll &#64;{target|token_id} &#91;[1d6+&#63;{Bonus|0}]&#93;
         console.log(`Chat: [${msg.getSpeakingAs()} (${msg.getPlayer().getDisplayName()})] ${msg.getContent()}`)
 
         const content = msg.getContent();
