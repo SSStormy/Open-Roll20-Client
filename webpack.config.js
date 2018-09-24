@@ -1,18 +1,23 @@
 module.exports = {
     entry: {
-        "index": "./src/index.ts",
         "testing": "./src/testing.ts",
+        "index": "./src/index.ts"
     },
+
     mode: "development",
     target: "node",
 
     devtool: "source-map",
 
+    resolve: {
+        extensions: ['.ts', '.js']
+    },
+
     module: {
         rules: [
             {
                 test: /\.tsx?$/,
-                loader: 'awesome-typescript-loader',
+                loader: 'ts-loader',
             },
             {
                 test: /\.js$/,
