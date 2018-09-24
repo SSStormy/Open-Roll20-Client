@@ -11,12 +11,14 @@ for (const key in cfg) {
 const asyncCtx = async () => {
 
     const campaign = new Campaign(
-        "campaign-3681941-o8feH7cdthipn745_0UaEA",
+        <string>process.env.ROLL20_CAMPAIGN_PATH,
         <string>process.env.ROLL20_GNTKN,
-        "-LMscFSR9rEZsn74c22H");
+        <string>process.env.ROLL20_PLAYER_ID);
 
     campaign.ready().on(async () => {
         console.log("ready.");
+        await campaign.say("heaaallo world");
+        console.log("sent message");
     });
 
     campaign.chat().added().on(async (msg: ChatMessage) => {

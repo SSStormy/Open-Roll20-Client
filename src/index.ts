@@ -52,7 +52,15 @@ export abstract class HighLevelObject<TLow extends IBaseLowData> {
     }
 
     public setArbitrary(varName: string, data: any) {
-        this.getFirebase().child(varName).set(data);
+        return new Promise((ok, err) => {
+            this.getFirebase().child(varName).set(data, (e: any) => {
+                if (e) {
+                    err(e);
+                    return;
+                }
+                ok();
+            });
+        });
     }
 }
 
@@ -83,7 +91,7 @@ export class Attribute extends HighLevelObject<IAttributeData> {
     }
 
     public setName(name: string) {
-        this.setArbitrary("name", name);
+        return this.setArbitrary("name", name);
     }
 
     public getCurrentValue() {
@@ -91,7 +99,7 @@ export class Attribute extends HighLevelObject<IAttributeData> {
     }
 
     public setCurrentValue(current: string) {
-        this.setArbitrary("current", current);
+        return this.setArbitrary("current", current);
     }
 
     public getMaxValue() {
@@ -99,7 +107,7 @@ export class Attribute extends HighLevelObject<IAttributeData> {
     }
 
     public setMaxValue(max: string) {
-        this.setArbitrary("max", max);
+        return this.setArbitrary("max", max);
     }
 }
 
@@ -117,9 +125,9 @@ export interface IHighArray<THigh> {
 
     getLocalValues(): THigh[];
 
-    add(obj: THigh): boolean;
+    add(obj: THigh): Promise<boolean>;
 
-    remove(obj: THigh): boolean;
+    remove(obj: THigh): Promise<boolean>;
 }
 
 // TODO : expose added, removed events for this array wrapper
@@ -154,22 +162,22 @@ export abstract class HighArrayCommon<THigh>
 
     private sync() {
         const data = this.getSyncData();
-        this.parent.setArbitrary(this.dataName, data);
+        return this.parent.setArbitrary(this.dataName, data);
     }
 
-    public add(obj: THigh) {
+    public async add(obj: THigh) {
         const data = this.dataSelector(obj);
 
         this.lowCache.push(data);
         this.highCache.push(obj);
 
-        this.sync();
+        await this.sync();
 
         // TODO : uniqueness?
         return true;
     }
 
-    public remove(obj: THigh) {
+    public async remove(obj: THigh) {
         let wasRemoved = false;
         const objId = this.dataSelector(obj);
         let idx = this.lowCache.length;
@@ -183,7 +191,7 @@ export abstract class HighArrayCommon<THigh>
             }
         }
 
-        this.sync();
+        await this.sync();
 
         return wasRemoved;
     }
@@ -289,7 +297,7 @@ export class Macro extends HighLevelObject<IMacroData> {
     }
 
     public setAction(action: string) {
-        this.setArbitrary("action", action);
+        return this.setArbitrary("action", action);
     }
 
     public isTokenAction() {
@@ -297,7 +305,7 @@ export class Macro extends HighLevelObject<IMacroData> {
     }
 
     public setIsTokenAction(state: boolean) {
-        this.setArbitrary("istokenaction", state);
+        return this.setArbitrary("istokenaction", state);
     }
 
     public getName() {
@@ -305,7 +313,7 @@ export class Macro extends HighLevelObject<IMacroData> {
     }
 
     public setName(name: string) {
-        this.setArbitrary("name", name);
+        return this.setArbitrary("name", name);
     }
 
     public visibleTo() {
@@ -321,17 +329,18 @@ export interface IPlayerData extends IBaseLowData {
     displayname?: string;
     online?: boolean;
     speakingas?: string;
+    chatbeepenabled?: boolean;
+    globalvolume?: number;
     advShortcuts?: boolean; // @NO-API
     adv_fow_revealed?: string; // @NO-API
     alphatokenactions?: boolean; // @NO-API
     apptddiceenabled?: boolean; // @NO-API
     bigsearchstyle?: boolean; // @NO-API
     chatavatarsenabled?: boolean; // @NO-API
-    chatbeepenabled?: boolean; // @NO-API
     chattimestampsenabled?: boolean; // @NO-API
     diceiconsenabled?: boolean; // @NO-API
     disableagency?: boolean; // @NO-API
-    globalvolume?: number; // @NO-API
+
     journalfolderstatus?: string; // @NO-API
     jukeboxfolderstatus?: string; // @NO-API
     lastActive?: number; // @NO-API
@@ -347,6 +356,13 @@ export interface IPlayerData extends IBaseLowData {
     videoplayersize?: string; // @NO-API
     videoreceivetype?: string; // @NO-API
 }
+
+const safeParseToInt = (val: any) => {
+    const type = typeof(val);
+    if(type === "number") return val;
+    if(type === "string") return parseInt(val, 10);
+    return NaN;
+};
 
 export class Player extends HighLevelObject<IPlayerData> {
     private macros: FirebaseCollection<Macro, IMacroData>;
@@ -382,7 +398,11 @@ export class Player extends HighLevelObject<IPlayerData> {
     }
 
     public setColor(color: string) {
-        this.setArbitrary("color", color);
+        return this.setArbitrary("color", color);
+    }
+
+    public isUs(): boolean {
+        return this.getUserId() === this.getCampaign().getCurrentPlayer().getUserId();
     }
 
     public getUserId(): string {
@@ -390,7 +410,7 @@ export class Player extends HighLevelObject<IPlayerData> {
     }
 
     public setUserId(id: string) {
-        this.setArbitrary("d20userid", id);
+        return this.setArbitrary("d20userid", id);
     }
 
     public getUsername(): string {
@@ -398,7 +418,7 @@ export class Player extends HighLevelObject<IPlayerData> {
     }
 
     public setUsername(username: string) {
-        this.setArbitrary("d20username", username);
+        return this.setArbitrary("d20username", username);
     }
 
     public getDisplayName(): string {
@@ -406,7 +426,15 @@ export class Player extends HighLevelObject<IPlayerData> {
     }
 
     public setDisplayName(displayName: string) {
-        this.setArbitrary("displayname", displayName);
+        return this.setArbitrary("displayname", displayName);
+    }
+
+    public getGlobalVolume(): number {
+        return safeParseToInt(this.getLowLevel().globalvolume);
+    }
+
+    public setGlobalVolume(val: number) {
+        return this.setArbitrary("globalvolume", val);
     }
 
     public isOnline(): boolean {
@@ -414,7 +442,7 @@ export class Player extends HighLevelObject<IPlayerData> {
     }
 
     public setIsOnline(state: boolean) {
-        this.setArbitrary("online", state);
+        return this.setArbitrary("online", state);
     }
 
     public getSpeakingAs(): string {
@@ -422,7 +450,15 @@ export class Player extends HighLevelObject<IPlayerData> {
     }
 
     public setSpeakingAs(speakingAs: string) {
-        this.setArbitrary("speakingas", speakingAs);
+        return this.setArbitrary("speakingas", speakingAs);
+    }
+
+    public isChatBeepEnabled(): boolean {
+        return this.getLowLevel().chatbeepenabled || true;
+    }
+
+    public setChatBeepEnabled(val: boolean) {
+        return this.setArbitrary("chatbeepenabled", val);
     }
 }
 
@@ -449,44 +485,44 @@ export class CharacterAbility extends HighLevelObject<ICharacterAbilityData> {
         this.setNewLowLevel(newLow);
     }
 
-    public getAction() {
-        return this.getLowLevel().action;
+    public getAction(): string {
+        return this.getLowLevel().action || "";
     }
 
     public setAction(action: string) {
-        this.setArbitrary("action", action);
+        return this.setArbitrary("action", action);
     }
 
-    public getDescription() {
-        return this.getLowLevel().description;
+    public getDescription(): string {
+        return this.getLowLevel().description || "";
     }
 
     public setDescription(desc: string) {
-        this.setArbitrary("description", desc);
+        return this.setArbitrary("description", desc);
     }
 
-    public getIsTokenAction() {
-        return this.getLowLevel().istokenaction;
+    public getIsTokenAction(): boolean {
+        return this.getLowLevel().istokenaction || false;
     }
 
     public setIsTokenAction(state: boolean) {
-        this.setArbitrary("istokenaction", state);
+        return this.setArbitrary("istokenaction", state);
     }
 
-    public getName() {
-        return this.getLowLevel().name;
+    public getName(): string{
+        return this.getLowLevel().name || "";
     }
 
     public setName(name: string) {
-        this.setArbitrary("name", name);
+        return this.setArbitrary("name", name);
     }
 
-    public getOrder() {
-        return this.getLowLevel().order;
+    public getOrder(): number {
+        return safeParseToInt(this.getLowLevel().order);
     }
 
     public setOrder(order: number) {
-        this.setArbitrary("order", order);
+        return this.setArbitrary("order", order);
     }
 }
 
@@ -635,7 +671,7 @@ export class Character extends HighLevelObject<ICharacterData> {
     }
 
     public setName(name: string) {
-        this.setArbitrary("name", name);
+        return this.setArbitrary("name", name);
     }
 
     public getAvatarURL(): string {
@@ -643,7 +679,7 @@ export class Character extends HighLevelObject<ICharacterData> {
     }
 
     public setAvatarURL(url: string) {
-        this.setArbitrary("avatar", url);
+        return this.setArbitrary("avatar", url);
     }
 
     public canAccessBlobs() {
@@ -850,16 +886,38 @@ export class Campaign {
     }
 
     public say(content: string, who: string = "not a bot", type: string = "general") {
-        const key = this.chatMessages.getFirebase().push().key();
+        return new Promise((ok, err) => {
+            const fb = this.chatMessages.getFirebase();
 
-        // @ts-ignore
-        const priority = Firebase.ServerValue.TIMESTAMP;
-        this.chatMessages.getFirebase().child(key).setWithPriority({
-            content,
-            playerid: this.playerId,
-            who,
-            type,
-        }, priority);
+            const data = {
+                content,
+                playerid: this.playerId,
+                who,
+                type,
+            };
+
+            console.log("before ref");
+            const ref = fb.push(data, (e: any) => {
+                console.log("ref callback");
+                if(e) {
+                    err(e);
+                    return;
+                }
+
+                // @ts-ignore
+                const priority = Firebase.ServerValue.TIMESTAMP;
+
+                const msgRef = fb.child(ref.key()).setPriority(priority, (e2: any) => {
+                    if(e2) {
+                        err(e2);
+                        return;
+                    }
+
+                    ok(msgRef);
+                });
+            });
+        });
+
     }
 }
 
@@ -1024,6 +1082,7 @@ export class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extend
             this.getFirebase().child(key).setWithPriority(low, priority, (e: any) => {
                 if (e) {
                     err(e);
+                    return;
                 }
             });
 
