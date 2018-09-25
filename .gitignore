@@ -2,5 +2,4 @@ dist/
 build/
 node_modules
 .idea
-.env
-.env.gntkn
+.env*

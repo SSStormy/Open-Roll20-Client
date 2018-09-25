@@ -3,7 +3,7 @@ import {Campaign, ChatMessage, Character} from "./index";
 const dotenv = require("dotenv");
 const fs = require("fs");
 
-const cfg = dotenv.parse(fs.readFileSync(".env.gntkn"));
+const cfg = dotenv.parse(fs.readFileSync(".env.test"));
 for (const key in cfg) {
     process.env[key] = cfg[key];
 }
@@ -12,12 +12,13 @@ const asyncCtx = async () => {
 
     const campaign = new Campaign(
         <string>process.env.ROLL20_CAMPAIGN_PATH,
-        <string>process.env.ROLL20_GNTKN,
         <string>process.env.ROLL20_PLAYER_ID);
+
+    await campaign.login(<string>process.env.ROLL20_GNTKN);
 
     campaign.ready().on(async () => {
         console.log("ready.");
-        await campaign.say("heaaallo world");
+        //await campaign.say("heaaallo world");
         console.log("sent message");
     });
 
@@ -30,7 +31,7 @@ const asyncCtx = async () => {
 
         const content = msg.getContent();
         if (content.startsWith("!ping")) {
-            campaign.say(`pong ${content.substring("!ping".length)}`);
+          //  campaign.say(`pong ${content.substring("!ping".length)}`);
         }
 
     });

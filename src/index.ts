@@ -1,4 +1,4 @@
-require("firebase");
+const firebase = require("firebase");
 
 export type Firebase_T = any;
 export type Firebase_Child_T = any;
@@ -18,6 +18,10 @@ export abstract class HighLevelObject<TLow extends IBaseLowData> {
     public constructor(lowLevel: TLow, campaign: Campaign, fb: Firebase_Child_T) {
         this.campaign = campaign;
         this.firebase = fb;
+    }
+
+    public destroy() {
+        return this.firebase.remove();
     }
 
     public getId() {
@@ -128,6 +132,8 @@ export interface IHighArray<THigh> {
     add(obj: THigh): Promise<boolean>;
 
     remove(obj: THigh): Promise<boolean>;
+
+    clear(): Promise<void>;
 }
 
 // TODO : expose added, removed events for this array wrapper
@@ -160,9 +166,15 @@ export abstract class HighArrayCommon<THigh>
 
     protected abstract internalTryRepopulateWith(rawData: string): void;
 
-    private sync() {
+    private async sync() {
         const data = this.getSyncData();
-        return this.parent.setArbitrary(this.dataName, data);
+        return await this.parent.setArbitrary(this.dataName, data);
+    }
+
+    public async clear() {
+        this.lowCache = [];
+        this.highCache = [];
+        await this.sync();
     }
 
     public async add(obj: THigh) {
@@ -178,22 +190,31 @@ export abstract class HighArrayCommon<THigh>
     }
 
     public async remove(obj: THigh) {
-        let wasRemoved = false;
-        const objId = this.dataSelector(obj);
-        let idx = this.lowCache.length;
+        const rmFromArr = <T>(arr: T[], eqFx: (a: T) => boolean): boolean => {
+            let wasRemoved = false;
 
-        while (idx-- > 0) {
-            const lowCacheId = this.lowCache[idx];
+            let idx = arr.length;
 
-            if (lowCacheId === objId) {
-                // no need to update local cache since we're going to reparse new data after syncing anyway
-                wasRemoved = true;
+            while (idx-- > 0) {
+                const val = arr[idx];
+
+                if (eqFx(val)) {
+                    arr.splice(idx, 1);
+                    wasRemoved = true;
+                }
             }
-        }
+
+            return wasRemoved;
+        };
+
+        const objId = this.dataSelector(obj);
+
+        const lowArrayWasRemoved = rmFromArr(this.lowCache, lowD => lowD === objId);
+        rmFromArr(this.highCache, highD => this.dataSelector(highD) === objId);
 
         await this.sync();
 
-        return wasRemoved;
+        return lowArrayWasRemoved;
     }
 
     public getLocalValues(): THigh[] {
@@ -220,14 +241,13 @@ export class HighJsonIdArray<THigh>
     extends HighArrayCommon<THigh> {
 
     protected internalTryRepopulateWith(rawData: string): void {
-        let data = [];
         try {
-            data = JSON.parse(rawData);
+            // TODO : @HACK
+            this.lowCache = JSON.parse(rawData);
+            this.highCache = JSON.parse(rawData);
         } catch (err) {
             console.log(`Failed to parse json id array data ${err}`);
         }
-
-        this.lowCache = this.highCache = data;
     }
 
     protected getSyncData(): any {
@@ -267,6 +287,7 @@ export class Macro extends HighLevelObject<IMacroData> {
 
     private constructor(lowLevel: IMacroData, campaign: Campaign, fb: Firebase_Child_T) {
         super(lowLevel, campaign, fb);
+        this.updateLowLevelData(lowLevel);
 
         this.visibleToArray = new HighCommaSeparatedIdArray<Player>(
             "visibleto",
@@ -274,14 +295,12 @@ export class Macro extends HighLevelObject<IMacroData> {
             (id: string) => campaign.players().getById(id),
             (obj: Player) => obj.getId()
         );
-
-        this.updateLowLevelData(lowLevel);
     }
 
     public updateLowLevelData(newLow: IMacroData): void {
         this.setNewLowLevel(newLow);
 
-        this.visibleToArray.invalidateCache();
+        if(this.visibleToArray) this.visibleToArray.invalidateCache();
     }
 
     public static async fromRaw(
@@ -359,8 +378,8 @@ export interface IPlayerData extends IBaseLowData {
 
 const safeParseToInt = (val: any) => {
     const type = typeof(val);
-    if(type === "number") return val;
-    if(type === "string") return parseInt(val, 10);
+    if (type === "number") return val;
+    if (type === "string") return parseInt(val, 10);
     return NaN;
 };
 
@@ -369,14 +388,13 @@ export class Player extends HighLevelObject<IPlayerData> {
 
     private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
         super(lowLevel, campaign, fb);
+        this.updateLowLevelData(lowLevel);
 
         this.macros = new FirebaseCollection(
             campaign,
             `/macros/player/${lowLevel.id}/`,
             Macro.fromRaw
         );
-
-        this.updateLowLevelData(lowLevel);
     }
 
     public updateLowLevelData(newLow: IPlayerData): void {
@@ -402,10 +420,13 @@ export class Player extends HighLevelObject<IPlayerData> {
     }
 
     public isUs(): boolean {
-        return this.getUserId() === this.getCampaign().getCurrentPlayer().getUserId();
+        const p = this.getCampaign().getCurrentPlayer();
+        if (!p) return false;
+
+        return this.getUserAccountId() === p.getUserAccountId();
     }
 
-    public getUserId(): string {
+    public getUserAccountId(): string {
         return this.getLowLevel().d20userid || ""
     }
 
@@ -509,7 +530,7 @@ export class CharacterAbility extends HighLevelObject<ICharacterAbilityData> {
         return this.setArbitrary("istokenaction", state);
     }
 
-    public getName(): string{
+    public getName(): string {
         return this.getLowLevel().name || "";
     }
 
@@ -545,8 +566,8 @@ export interface ICharacterData extends IBaseLowData {
 
 export class Character extends HighLevelObject<ICharacterData> {
 
-    private attribs: FirebaseCollection<Attribute, IAttributeData>;
-    private abilities: FirebaseCollection<CharacterAbility, ICharacterAbilityData>;
+    private _attributes: FirebaseCollection<Attribute, IAttributeData>;
+    private _abilities: FirebaseCollection<CharacterAbility, ICharacterAbilityData>;
 
     private highTagsArray: IHighArray<string>;
     private highControlledBy: IHighArray<Player>;
@@ -556,8 +577,9 @@ export class Character extends HighLevelObject<ICharacterData> {
     private gmNotesBlob: FirebaseVar<string> | null;
     private defaultTokenBlob: FirebaseVar<any> | null; // TODO : parse type
 
-    private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
+    private constructor(lowLevel: ICharacterData, campaign: Campaign, fb: Firebase_Child_T) {
         super(lowLevel, campaign, fb);
+        this.updateLowLevelData(lowLevel);
 
         const players = campaign.players();
         const getPlayerId = (obj: Player) => obj.getId();
@@ -583,37 +605,29 @@ export class Character extends HighLevelObject<ICharacterData> {
             getPlayerId
         );
 
-        this.attribs = new FirebaseCollection(
+        this._attributes = new FirebaseCollection(
             campaign,
             `/char-attribs/char/${lowLevel.id}/`,
             Attribute.fromRaw
         );
 
-        this.abilities = new FirebaseCollection(
+        this._abilities = new FirebaseCollection(
             campaign,
             `/char-abils/char/${lowLevel.id}/`,
             CharacterAbility.fromRaw
         );
 
-        this.updateLowLevelData(lowLevel);
+        this.bioBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/bio/`, (d: string) => Promise.resolve(d));
+        this.gmNotesBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/gmnotes/`, (d: string) => Promise.resolve(d));
+        this.defaultTokenBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/defaulttoken/`, (d: string) => Promise.resolve(d));
     }
 
     public updateLowLevelData(newLow: ICharacterData): void {
         this.setNewLowLevel(newLow);
 
-        this.highTagsArray.invalidateCache();
-        this.highControlledBy.invalidateCache();
-        this.highInJournals.invalidateCache();
-
-        if (this.canAccessBlobs()) {
-            if (!this.bioBlob) this.bioBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/bio/`, (d: string) => Promise.resolve(d));
-            if (!this.gmNotesBlob) this.gmNotesBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/gmnotes/`, (d: string) => Promise.resolve(d));
-            if (!this.defaultTokenBlob) this.defaultTokenBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/defaulttoken/`, (d: string) => Promise.resolve(d));
-        } else {
-            this.bioBlob = null;
-            this.gmNotesBlob = null;
-            this.defaultTokenBlob = null
-        }
+        if(this.highTagsArray) this.highTagsArray.invalidateCache();
+        if(this.highControlledBy) this.highControlledBy.invalidateCache();
+        if(this.highInJournals) this.highInJournals.invalidateCache();
     }
 
     public static async fromRaw(
@@ -624,8 +638,8 @@ export class Character extends HighLevelObject<ICharacterData> {
         const char = new Character(rawData, campaign, fb);
 
         await Promise.all([
-            char.attribs.getReadyPromise(),
-            char.abilities.getReadyPromise()
+            char._attributes.getReadyPromise(),
+            char._abilities.getReadyPromise()
         ]);
 
         return char;
@@ -688,8 +702,12 @@ export class Character extends HighLevelObject<ICharacterData> {
         return controlledBy.includes(this.getCampaign().getCurrentPlayerId());
     }
 
-    public getAttributes() {
-        return this.attribs;
+    public attributes() {
+        return this._attributes;
+    }
+
+    public abilities() {
+        return this._abilities;
     }
 }
 
@@ -808,22 +826,21 @@ export class Campaign {
     private playerCollection: FirebaseCollection<Player, IPlayerData>;
     private chatMessages: FirebaseCollection<ChatMessage, IChatMessageData>;
 
-    private readyEvent: FunctionPool<() => void> = new FunctionPool();
+    private readyEvent: FunctionPoolForReadyEvents<() => void> = new FunctionPoolForReadyEvents();
     private ourPlayer: Player | null;
 
-    public constructor(campaignIdString: string, gntkn: string, playerId: string) {
+    public constructor(campaignUrl: string, playerId: string, gntkn: string) {
         // @ts-ignore
-        this.firebase = new Firebase(`https://roll20-9.firebaseio.com/${campaignIdString}/`);
-        this.firebase.authWithCustomToken(gntkn);
-        this.playerId = playerId;
-
+        this.firebase = new Firebase(campaignUrl);
         this.chatMessages = this.firebase.child("/chat/");
+        this.playerId = playerId;
 
         this.characterCollectin = new FirebaseCollection<Character, ICharacterData>(
             this,
             "/characters/",
             Character.fromRaw
         );
+
 
         this.playerCollection = new FirebaseCollection<Player, IPlayerData>(
             this,
@@ -837,21 +854,35 @@ export class Campaign {
             ChatMessage.fromRaw
         );
 
+        this.getFirebase().on("value", (v: any) => {
+            console.log(v);
+        });
+
         Promise.all([
             this.characterCollectin.getReadyPromise(),
             this.playerCollection.getReadyPromise(),
             this.chatMessages.getReadyPromise()
         ])
             .then(() => {
+                console.log("READY!");
+                this.readyEvent.setReady();
                 this.readyEvent.fireAll();
             });
+
+        // Note(Justas): Bug in firebase: all but one last promise returned from authWithCustomToken
+        // will fail to properly resolve, meaning we cannot await this or we deadlock :(.
+        this.getFirebase().authWithCustomToken(gntkn);
     }
 
     public getCurrentPlayerId() {
         return this.playerId;
     }
 
-    public getCurrentPlayer(): Player {
+    public getCurrentPlayer(): Player | null {
+        if (!this.characters().isReady()) {
+            throw new Error("Cannot get current player until the character collection is ready.");
+        }
+
         if (!this.ourPlayer) {
             this.ourPlayer = this.players().getById(this.playerId);
         }
@@ -899,7 +930,7 @@ export class Campaign {
             console.log("before ref");
             const ref = fb.push(data, (e: any) => {
                 console.log("ref callback");
-                if(e) {
+                if (e) {
                     err(e);
                     return;
                 }
@@ -908,7 +939,7 @@ export class Campaign {
                 const priority = Firebase.ServerValue.TIMESTAMP;
 
                 const msgRef = fb.child(ref.key()).setPriority(priority, (e2: any) => {
-                    if(e2) {
+                    if (e2) {
                         err(e2);
                         return;
                     }
@@ -921,12 +952,14 @@ export class Campaign {
     }
 }
 
-export class FunctionPool<T> {
-    private fxList: T[];
+interface IFunctionPool<T> {
+    on: (fx: T) => void;
+    off: (fx: T) => void;
+    fireAll: (...args: any[]) => void;
+}
 
-    constructor() {
-        this.fxList = [];
-    }
+export class FunctionPool<T> implements IFunctionPool<T> {
+    private fxList: T[] = [];
 
     public on(fx: T) {
         this.fxList.push(fx);
@@ -951,6 +984,32 @@ export class FunctionPool<T> {
     }
 }
 
+export class FunctionPoolForReadyEvents<T> implements IFunctionPool<T> {
+    private _pool: FunctionPool<T> = new FunctionPool<T>();
+    private _ready: boolean = false;
+
+    public setReady() {
+        this._ready = true;
+    }
+
+    public fireAll(...args: any[]) {
+        this._pool.fireAll(args);
+    };
+
+    public off(fx: T): void {
+        this._pool.off(fx);
+    }
+
+    public on(fx: T): void {
+        // since we are already ready, call the callback.
+        if (this._ready) {
+            (<any>fx).apply(null, true);
+        }
+
+        this._pool.on(fx);
+    }
+}
+
 export abstract class FirebaseCommon<THigh, TLow, TInitial> {
     private campaign: Campaign;
     private url: string;
@@ -959,7 +1018,8 @@ export abstract class FirebaseCommon<THigh, TLow, TInitial> {
     private addedEvent: FunctionPool<(data: THigh) => Promise<void>> = new FunctionPool();
     private changedEvent: FunctionPool<(data: THigh) => Promise<void>> = new FunctionPool();
     private removedEvent: FunctionPool<(data: THigh) => Promise<void>> = new FunctionPool();
-    private readyEvent: FunctionPool<(data: TInitial) => Promise<void>> = new FunctionPool();
+    private readyEvent: FunctionPoolForReadyEvents<(data: TInitial) => Promise<void>>
+        = new FunctionPoolForReadyEvents();
 
     private readyPromise: Promise<void>;
     private isReadyYet: boolean = false;
@@ -987,6 +1047,7 @@ export abstract class FirebaseCommon<THigh, TLow, TInitial> {
 
         if (!this.isReady()) {
             this.isReadyYet = true;
+            this.ready().setReady();
             this.readyEvent.fireAll();
         }
     };
@@ -1222,6 +1283,7 @@ export class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extend
         return this.byId[id];
     }
 }
+
 
 
 
