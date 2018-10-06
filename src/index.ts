@@ -392,7 +392,8 @@ export class Player extends HighLevelIdObject<IPlayerData> {
         this.macros = new FirebaseCollection(
             client,
             `/macros/player/${lowLevel.id}/`,
-            Macro.fromRaw
+            Macro.fromRaw,
+            "player macros"
         );
     }
 
@@ -607,18 +608,20 @@ export class Character extends HighLevelIdObject<ICharacterData> {
         this._attributes = new FirebaseCollection(
             client,
             `/char-attribs/char/${lowLevel.id}/`,
-            Attribute.fromRaw
+            Attribute.fromRaw,
+            "character attributes"
         );
 
         this._abilities = new FirebaseCollection(
             client,
             `/char-abils/char/${lowLevel.id}/`,
-            CharacterAbility.fromRaw
+            CharacterAbility.fromRaw,
+            "character abilities"
         );
 
-        this.bioBlob = new FirebaseVar(this.getClient(), `/char-blobs/${this.getId()}/bio/`, (d: string) => Promise.resolve(d));
-        this.gmNotesBlob = new FirebaseVar(this.getClient(), `/char-blobs/${this.getId()}/gmnotes/`, (d: string) => Promise.resolve(d));
-        this.defaultTokenBlob = new FirebaseVar(this.getClient(), `/char-blobs/${this.getId()}/defaulttoken/`, (d: string) => Promise.resolve(d));
+        this.bioBlob = new FirebaseVar(this.getClient(), `/char-blobs/${this.getId()}/bio/`, (d: string) => Promise.resolve(d), "character bio blob");
+        this.gmNotesBlob = new FirebaseVar(this.getClient(), `/char-blobs/${this.getId()}/gmnotes/`, (d: string) => Promise.resolve(d), "character gmnotes blob");
+        this.defaultTokenBlob = new FirebaseVar(this.getClient(), `/char-blobs/${this.getId()}/defaulttoken/`, (d: string) => Promise.resolve(d), "character defaultoken blob");
     }
 
     public updateLowLevelData(newLow: ICharacterData): void {
@@ -840,6 +843,26 @@ interface IAuthResponse {
     privder: string;
 }
 
+interface ILogger {
+    debug: (msg: string, ...objs: any[]) => void;
+    info: (msg: string, ...objs: any[]) => void;
+    warning: (msg: string, ...objs: any[]) => void;
+    critical: (msg: string, ...objs: any[]) => void;
+}
+
+class NullLogger implements  ILogger {
+    public static readonly Singleton = new NullLogger();
+
+    critical = (msg: string, ...objs: any[]) => {};
+    debug = (msg: string, ...objs: any[]) => {};
+    info = (msg: string, ...objs: any[]) => {};
+    warning = (msg: string, ...objs: any[]) => {};
+
+    private constructor() {
+
+    }
+}
+
 export class Roll20Client {
     private _firebase: Firebase_T;
     private _campaign: Campaign;
@@ -850,12 +873,18 @@ export class Roll20Client {
     private _playerCollection: FirebaseCollection<Player, IPlayerData>;
     private _chatMessages: FirebaseCollection<ChatMessage, IChatMessageData>;
 
-    private _readyEvent: FunctionPoolForReadyEvents<() => void> = new FunctionPoolForReadyEvents();
+    private _readyEvent: FunctionPoolForReadyEvents<() => void>;
     private _ourPlayer: Player | null;
 
     private _isLoggedIn: boolean = false;
+    private _log: ILogger;
 
-    public constructor(campaignUrl: string) {
+    public constructor(campaignUrl: string, logger: ILogger = NullLogger.Singleton) {
+
+        this._log = logger;
+        this._log.debug(`Creating new client for campaign ${campaignUrl}`);
+
+        this._readyEvent = new FunctionPoolForReadyEvents("client ready", this._log);
 
         // @ts-ignore
         this._firebase = new Firebase(campaignUrl, new Firebase.Context());
@@ -866,25 +895,24 @@ export class Roll20Client {
         this._characterCollectin = new FirebaseCollection<Character, ICharacterData>(
             this,
             "/characters/",
-            Character.fromRaw
+            Character.fromRaw,
+            "characters"
         );
 
 
         this._playerCollection = new FirebaseCollection<Player, IPlayerData>(
             this,
             "/players/",
-            Player.fromRaw
+            Player.fromRaw,
+            "players"
         );
 
         this._chatMessages = new FirebaseCollection<ChatMessage, IChatMessageData>(
             this,
             "/chat/",
-            ChatMessage.fromRaw
+            ChatMessage.fromRaw,
+            "chat"
         );
-
-        this.getFirebase().on("value", (v: any) => {
-            console.log(v);
-        });
 
         Promise.all([
             this._characterCollectin.getReadyPromise(),
@@ -893,25 +921,36 @@ export class Roll20Client {
             this._campaign.getReadyPromise(),
         ])
             .then(() => {
-                console.log("READY!");
+                logger.info("We are now ready.");
                 this._readyEvent.setReady();
                 this._readyEvent.fireAll();
+                logger.debug("Ready events have been fired.");
             });
     }
 
     public login(gntkn: string) {
+        this._log.info("Logging in");
+
         return new Promise<IAuthResponse>((ok, err) => {
             this.getFirebase().authWithCustomToken(gntkn, (e: any, authRoot: IAuthResponse) => {
+                this._log.debug("Got auth callback");
                 if (e) {
+                    this._log.warning("Auth failed", e);
                     err(e);
                     return;
                 }
 
                 this._playerId = authRoot.auth.playerid;
                 this._isLoggedIn = true;
+
+                this._log.info("Successfully auth'ed");
                 ok(authRoot);
             });
         })
+    }
+
+    public getLogger() {
+        return this._log;
     }
 
     public isLoggedIn() {
@@ -937,7 +976,7 @@ export class Roll20Client {
     public getCurrentPlayer(): Player | null {
         this.assertLoggedIn();
 
-        if (!this.characters().isReady()) {
+        if (!this.players().isReady()) {
             throw new Error("Cannot get current player until the character collection is ready.");
         }
 
@@ -946,7 +985,8 @@ export class Roll20Client {
         }
 
         if (!this._ourPlayer) {
-            console.error(`Cannot find local player who has id of ${this._playerId}`);
+            this._log.critical(`Cannot find local player who has id of ${this._playerId}`);
+
             // @ts-ignore
             return null;
         }
@@ -977,7 +1017,10 @@ export class Roll20Client {
     public say(content: string, who: string = "not a bot", type: string = "general") {
         this.assertLoggedIn();
 
+        this._log.debug("say: before promise");
         return new Promise((ok, err) => {
+            this._log.debug("say: started promise");
+
             const fb = this._chatMessages.getFirebase();
 
             const data = {
@@ -987,10 +1030,12 @@ export class Roll20Client {
                 type,
             };
 
-            console.log("before ref");
+            this._log.debug("say: before ref push");
             const ref = fb.push(data, (e: any) => {
-                console.log("ref callback");
+                this._log.debug("say: in ref push callback");
+
                 if (e) {
+                    this._log.warning(`Failed to send message ${content}`, e);
                     err(e);
                     return;
                 }
@@ -998,8 +1043,11 @@ export class Roll20Client {
                 // @ts-ignore
                 const priority = Firebase.ServerValue.TIMESTAMP;
 
+                this._log.debug("say: before set priority");
                 const msgRef = fb.child(ref.key()).setPriority(priority, (e2: any) => {
+                    this._log.debug("say: in set priority");
                     if (e2) {
+                        this._log.warning(`Failed to set priority of message ${content}`, e2);
                         err(e2);
                         return;
                     }
@@ -1019,12 +1067,23 @@ interface IFunctionPool<T> {
 
 export class FunctionPool<T> implements IFunctionPool<T> {
     private fxList: T[] = [];
+    private _purpose: string;
+    private _log: ILogger;
+
+    public constructor(purpose: string, log: ILogger) {
+        this._purpose = purpose;
+        this._log = log;
+    }
 
     public on(fx: T) {
+        this._log.debug(`function pool ${this._purpose}: adding fx`, fx);
+
         this.fxList.push(fx);
     }
 
     public off(fx: T) {
+        this._log.debug(`function pool ${this._purpose}: removing fx`, fx);
+
         let idx = this.fxList.length;
 
         while (idx-- > 0) {
@@ -1036,18 +1095,28 @@ export class FunctionPool<T> implements IFunctionPool<T> {
     }
 
     public fireAll = (...args: any[]) => {
+        this._log.debug(`function pool ${this._purpose}: firing all with args`, args);
+
         for (const fx of this.fxList) {
             (<any>fx).apply(null, args);
-
         }
     }
 }
 
 export class FunctionPoolForReadyEvents<T> implements IFunctionPool<T> {
-    private _pool: FunctionPool<T> = new FunctionPool<T>();
+    private _pool: FunctionPool<T>;
     private _ready: boolean = false;
+    private _purpose: string;
+    private _log: ILogger;
+
+    public constructor(purpose: string, log: ILogger) {
+        this._pool = new FunctionPool<T>(purpose, log);
+        this._purpose = purpose;
+        this._log = log;
+    }
 
     public setReady() {
+        this._log.debug(`function pool for ready events ${this._purpose}: setting ready`);
         this._ready = true;
     }
 
@@ -1062,6 +1131,7 @@ export class FunctionPoolForReadyEvents<T> implements IFunctionPool<T> {
     public on(fx: T): void {
         // since we are already ready, call the callback.
         if (this._ready) {
+            this._log.debug(`function pool for ready events ${this._purpose}: received an on call when already ready, firing`);
             (<any>fx).apply(null, true);
         }
 
@@ -1070,99 +1140,114 @@ export class FunctionPoolForReadyEvents<T> implements IFunctionPool<T> {
 }
 
 export abstract class FirebaseCommon<THigh, TLow, TInitial> {
-    private client: Roll20Client;
-    private url: string;
-    private firebase: Firebase_Child_T;
+    private _client: Roll20Client;
+    private _url: string;
+    private _firebase: Firebase_Child_T;
 
-    private addedEvent: FunctionPool<(data: THigh) => Promise<void>> = new FunctionPool();
-    private changedEvent: FunctionPool<(data: THigh) => Promise<void>> = new FunctionPool();
-    private removedEvent: FunctionPool<(data: THigh) => Promise<void>> = new FunctionPool();
-    private readyEvent: FunctionPoolForReadyEvents<(data: TInitial) => Promise<void>>
-        = new FunctionPoolForReadyEvents();
+    private _addedEvent: FunctionPool<(data: THigh) => Promise<void>>;
+    private _changedEvent: FunctionPool<(data: THigh) => Promise<void>>;
+    private _removedEvent: FunctionPool<(data: THigh) => Promise<void>>;
+    private _readyEvent: FunctionPoolForReadyEvents<(data: TInitial) => Promise<void>>;
 
-    private readyPromise: Promise<void>;
-    private isReadyYet: boolean = false;
+    private _readyPromise: Promise<void>;
+    private _isReadyYet: boolean = false;
 
-    public constructor(client: Roll20Client, url: string) {
-        this.client = client;
-        this.url = url;
-        this.firebase = client.getFirebase().child(url);
+    protected _log: ILogger;
+    protected _purpose: string;
 
-        this.readyPromise = new Promise(ok => this.ready().on(async () => {
-            console.log(`${this.url} IS READY`);
+    public constructor(client: Roll20Client, url: string, purpose: string) {
+        this._log = client.getLogger();
+        this._purpose = purpose;
+
+        this._log.debug(`Creating firebase common for ${purpose} at url ${url}`);
+
+        this._addedEvent = new FunctionPool(purpose, this._log);
+        this._changedEvent= new FunctionPool(purpose, this._log);
+        this._removedEvent= new FunctionPool(purpose, this._log);
+        this._readyEvent = new FunctionPoolForReadyEvents(purpose, this._log);
+
+        this._client = client;
+        this._url = url;
+        this._firebase = client.getFirebase().child(url);
+
+        this._readyPromise = new Promise(ok => this.ready().on(async () => {
+            this._log.info(`Firebase common ${purpose} ${url}: is ready`);
             ok();
+            this._log.debug(`Firebase common ${purpose} ${url}: ready events fired.`);
         }));
 
-        this.firebase.once("value", this.internalInit);
-
-        console.log(`created firebase collection ${this.url}`);
+        this._firebase.once("value", this.internalInit);
     }
 
-
     private internalInit = async (firebaseData: any) => {
+        this._log.debug(`Firebase common ${this._purpose} ${this._url}: received initial data.`, firebaseData);
+
         const data: TInitial = firebaseData.val();
 
         await this.initData(data);
 
         if (!this.isReady()) {
-            this.isReadyYet = true;
+            this._isReadyYet = true;
             this.ready().setReady();
-            this.readyEvent.fireAll();
+            this._readyEvent.fireAll();
         }
     };
 
     protected abstract async initData(data: TInitial): Promise<void>;
 
     public isReady() {
-        return this.isReadyYet;
+        return this._isReadyYet;
     }
 
     public getReadyPromise() {
-        return this.readyPromise;
+        return this._readyPromise;
     }
 
     public ready() {
-        return this.readyEvent;
+        return this._readyEvent;
     }
 
     public added() {
-        return this.addedEvent;
+        return this._addedEvent;
     };
 
     public changed() {
-        return this.changedEvent;
+        return this._changedEvent;
     }
 
     public removed() {
-        return this.removedEvent;
+        return this._removedEvent;
     }
 
     public getClient() {
-        return this.client;
+        return this._client;
     }
 
     public getFirebase() {
-        return this.firebase;
+        return this._firebase;
     }
 
     public getURL() {
-        return this.url;
+        return this._url;
     }
 }
 
 export class FirebaseVar<THigh> extends FirebaseCommon<THigh, string, string> {
 
-    private cache: THigh | null = null;
+    private _cache: THigh | null = null;
+    private _highLevelFactory: (a: string, b: Roll20Client, fb: Firebase_Child_T) => Promise<THigh>;
 
-    private highLevelFactory: (a: string, b: Roll20Client, fb: Firebase_Child_T) => Promise<THigh>;
+    public constructor(client: Roll20Client,
+                       url: string,
+                       factory: (a: string, b: Roll20Client, fb: Firebase_Child_T) => Promise<THigh>,
+                       purpose: string) {
 
-    public constructor(client: Roll20Client, url: string, factory: (a: string, b: Roll20Client, fb: Firebase_Child_T) => Promise<THigh>) {
-        super(client, url);
-        this.highLevelFactory = factory;
+        super(client, url, purpose);
+        this._highLevelFactory = factory;
     }
 
     public get(): THigh | null {
-        return this.cache;
+        return this._cache;
     }
 
     public set(data: string) {
@@ -1170,7 +1255,7 @@ export class FirebaseVar<THigh> extends FirebaseCommon<THigh, string, string> {
     }
 
     protected async initData(data: string): Promise<void> {
-        this.cache = await this.highLevelFactory(data, this.getClient(), this.getFirebase());
+        this._cache = await this._highLevelFactory(data, this.getClient(), this.getFirebase());
     }
 }
 
@@ -1181,29 +1266,33 @@ interface ICampaignData {
 export class Campaign extends FirebaseCommon<Campaign, ICampaignData, any> {
 
     public constructor(client: Roll20Client) {
-        super(client, "/campaign/");
+        super(client, "/campaign/", "campaign");
     }
 
     protected async initData(data: any): Promise<void> {
-        console.log(data);
+        this.getClient().getLogger().info("Campaign data", data);
     }
 }
 
 export class FirebaseCollection<THigh extends HighLevelIdObject<TLow>, TLow extends IBaseLowData> extends FirebaseCommon<THigh, TLow, { [id: string]: TLow }> {
-    private byId: { [id: string]: THigh } = {};
-    private idToIndex: { [id: string]: number } = {};
-    private all: THigh[] = [];
+    private _byId: { [id: string]: THigh } = {};
+    private _idToIndex: { [id: string]: number } = {};
+    private _all: THigh[] = [];
 
-    private createPromisesResolves: { [id: string]: (data: THigh) => void } = {};
+    private _createPromisesResolves: { [id: string]: (data: THigh) => void } = {};
+    private _highLevelFactory: (a: TLow, b: Roll20Client, fb: Firebase_Child_T) => Promise<THigh>;
 
-    private highLevelFactory: (a: TLow, b: Roll20Client, fb: Firebase_Child_T) => Promise<THigh>;
-
-    public constructor(client: Roll20Client, url: string, factory: (a: TLow, b: Roll20Client, fb: Firebase_Child_T) => Promise<THigh>) {
-        super(client, url);
-        this.highLevelFactory = factory;
+    public constructor(client: Roll20Client,
+                       url: string,
+                       factory: (a: TLow, b: Roll20Client, fb: Firebase_Child_T) => Promise<THigh>,
+                       purpose: string) {
+        super(client, url, purpose);
+        this._highLevelFactory = factory;
     }
 
     public create(): Promise<THigh> {
+        this._log.debug(`Firebase collection ${this._purpose}: Creating new object.`);
+
         // @ts-ignore
         const priority = Firebase.ServerValue.TIMESTAMP;
 
@@ -1214,12 +1303,13 @@ export class FirebaseCollection<THigh extends HighLevelIdObject<TLow>, TLow exte
         };
 
         return new Promise((ok, err) => {
-            this.createPromisesResolves[key] = ok;
+            this._createPromisesResolves[key] = ok;
 
             this.getFirebase().child(key).setWithPriority(low, priority, (e: any) => {
-                console.log("IN SET PRIORITY CALLBACK");
+                this._log.debug(`Firebase collection ${this._purpose}: IN SET PRIORITY CALLBACK`);
+
                 if (e) {
-                    delete this.createPromisesResolves[key];
+                    delete this._createPromisesResolves[key];
                     err(e);
                     return;
                 }
@@ -1264,7 +1354,7 @@ export class FirebaseCollection<THigh extends HighLevelIdObject<TLow>, TLow exte
         }
 
         {
-            const promiseResolve = this.createPromisesResolves[key];
+            const promiseResolve = this._createPromisesResolves[key];
             if (promiseResolve) {
                 promiseResolve(high);
             }
@@ -1296,7 +1386,7 @@ export class FirebaseCollection<THigh extends HighLevelIdObject<TLow>, TLow exte
     };
 
     public getAllAsArray() {
-        return this.all;
+        return this._all;
     }
 
     private async internalAddOrChange(data: TLow, key: string, fb: Firebase_Child_T): Promise<THigh | null> {
@@ -1311,11 +1401,11 @@ export class FirebaseCollection<THigh extends HighLevelIdObject<TLow>, TLow exte
             data.id = key;
         }
 
-        const high = await this.highLevelFactory(data, this.getClient(), fb);
+        const high = await this._highLevelFactory(data, this.getClient(), fb);
 
-        this.idToIndex[key] = this.all.length;
-        this.all.push(high);
-        this.byId[key] = high;
+        this._idToIndex[key] = this._all.length;
+        this._all.push(high);
+        this._byId[key] = high;
 
         return high;
     }
@@ -1334,28 +1424,28 @@ export class FirebaseCollection<THigh extends HighLevelIdObject<TLow>, TLow exte
 
     private internalDelete(key: string): THigh {
         {
-            const idx = this.idToIndex[key];
+            const idx = this._idToIndex[key];
             if (typeof(idx) === "number") {
-                this.all.splice(idx, 1);
+                this._all.splice(idx, 1);
             }
         }
 
-        const data = this.byId[key];
+        const data = this._byId[key];
 
-        delete this.byId[key];
-        delete this.idToIndex[key];
+        delete this._byId[key];
+        delete this._idToIndex[key];
 
         return data;
     }
 
 
     public getAllAsTable(): { [id: string]: THigh } {
-        return this.byId;
+        return this._byId;
     }
 
     public getById = (id: string | null | undefined): THigh | null => {
         if (!id) return null;
 
-        return this.byId[id];
+        return this._byId[id];
     }
 }

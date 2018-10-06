@@ -13,40 +13,15 @@ const asyncCtx = async () => {
     const campaign = new Roll20Client(
         <string>process.env.ROLL20_CAMPAIGN_PATH);
 
-    campaign.ready().on(async () => {
-        console.log("ready.");
-        //await campaign.say("heaaallo world");
-        console.log("sent message");
-    });
-
-    campaign.chat().added().on(async (msg: ChatMessage) => {
-        console.log(msg.getLowLevel());
-
-        // @ts-ignore
-        // TODO: chat buttons !attackroll &#64;{target|token_id} &#91;[1d6+&#63;{Bonus|0}]&#93;
-        console.log(`Chat: [${msg.getSpeakingAs()} (${msg.getPlayer().getDisplayName()})] ${msg.getContent()}`)
-
-        const content = msg.getContent();
-        if (content.startsWith("!ping")) {
-          //  campaign.say(`pong ${content.substring("!ping".length)}`);
-        }
-
-    });
-
-    campaign.characters().added().on(async (char: Character) => {
-        campaign.say("new character added");
-    });
-
-    campaign.characters().changed().on(async (char: Character) => {
-        campaign.say("character changed.");
-
-    });
-
-    campaign.characters().removed().on(async (char: Character) => {
-        campaign.say("character removed.");
-    });
-
     await campaign.login(<string>process.env.ROLL20_GNTKN);
+
+    campaign.players().ready().on(async () => {
+        const p = campaign.getCurrentPlayer();
+
+    });
+
+
 };
 
 asyncCtx().catch(console.error);
+b

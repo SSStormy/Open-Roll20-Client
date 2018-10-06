@@ -6,8 +6,8 @@ const dotenv = require("dotenv");
 const fs = require("fs");
 
 const nonGmEnv = dotenv.parse(fs.readFileSync(".env.test"));
-const gmEnv= dotenv.parse(fs.readFileSync(".env.test.gm"));
-const researchEnv= dotenv.parse(fs.readFileSync(".env.research"));
+const gmEnv = dotenv.parse(fs.readFileSync(".env.test.gm"));
+const researchEnv = dotenv.parse(fs.readFileSync(".env.research"));
 
 
 const timeout = (err: (a: any) => void, time = 10000) => {
@@ -26,12 +26,12 @@ const connectToCampaignAsGM = async () => await connectToCampaignWithThese(
     <string>gmEnv.ROLL20_PLAYER_ID,
     <string>gmEnv.ROLL20_GNTKN);
 
-const connectToCampaignAsPlayer= async () => await connectToCampaignWithThese(
+const connectToCampaignAsPlayer = async () => await connectToCampaignWithThese(
     <string>nonGmEnv.ROLL20_CAMPAIGN_PATH,
     <string>nonGmEnv.ROLL20_PLAYER_ID,
     <string>nonGmEnv.ROLL20_GNTKN);
 
-test("two clients on different campaigns", t => new Promise(async (ok, err)=> {
+test("two clients on different campaigns", t => new Promise(async (ok, err) => {
     timeout(err);
 
     const test2 = await connectToCampaignWithThese(
@@ -48,9 +48,9 @@ test("two clients on different campaigns", t => new Promise(async (ok, err)=> {
     let ready1 = false;
     let ready2 = false;
 
-    const tryFinish = (instance:  Roll20Client) => {
+    const tryFinish = (instance: Roll20Client) => {
         console.log(`can see players: ${instance.players().getAllAsArray().reduce((s, p) => s += p.getDisplayName() + " ", "")}`);
-        if(ready1 && ready2) {
+        if (ready1 && ready2) {
             t.true(true);
             ok();
         }
@@ -77,7 +77,7 @@ test("user acc permissions", t => new Promise(async (ok, err) => {
         let caught = false;
         try {
             await player.characters().create();
-        } catch(err) {
+        } catch (err) {
             caught = true;
         }
 
@@ -86,7 +86,7 @@ test("user acc permissions", t => new Promise(async (ok, err) => {
     });
 }));
 
-test("cannot get current player until chars are ready", t => new Promise(async (ok, err)=> {
+test("cannot get current player until chars are ready", t => new Promise(async (ok, err) => {
     timeout(err);
 
     const camp = await connectToCampaignAsGM();
@@ -101,7 +101,7 @@ test("current player has valid data", t => new Promise(async (ok, err) => {
 
     camp.players().ready().on(async () => {
         const p = camp.getCurrentPlayer();
-        if(!p) {
+        if (!p) {
             t.fail();
             return;
         }
@@ -109,61 +109,6 @@ test("current player has valid data", t => new Promise(async (ok, err) => {
         t.deepEqual(p.getUserAccountId(), gmEnv.ROLL20_PLAYER_ACC_ID);
 
         ok();
-    });
-}));
-
-test("login with both gm and normal user accs", t => new Promise(async (ok, err) => {
-    timeout(err);
-
-    const player = await connectToCampaignAsPlayer();
-    const gm = await connectToCampaignAsGM();
-
-    let isGmReady = false;
-    let isPlayerReady = false;
-
-    const tryFinish = async () =>  {
-        if(isGmReady && isPlayerReady) {
-
-            // try modifying some stuff as player that we dont have perms to
-            const gmPlayerInGMGame= gm.getCurrentPlayer();
-            t.truthy(gmPlayerInGMGame);
-            if(!gmPlayerInGMGame) return; // ts
-
-            t.deepEqual(gmPlayerInGMGame.getUserAccountId(), gmEnv.ROLL20_PLAYER_ACC_ID);
-
-            // @ts-ignore
-            const gmPlayerInPlayerGame = player.players().getById(gmPlayerInGMGame.getId());
-            t.truthy(gmPlayerInPlayerGame);
-            if(!gmPlayerInPlayerGame) return; // ts
-
-            t.deepEqual(gmPlayerInPlayerGame.getUserAccountId(), gmEnv.ROLL20_PLAYER_ACC_ID);
-
-            const playerInPlayerGame = player.getCurrentPlayer();
-            t.truthy(playerInPlayerGame);
-            if(!playerInPlayerGame) return; // ts
-
-            t.deepEqual(playerInPlayerGame.getUserAccountId(), nonGmEnv.ROLL20_PLAYER_ACC_ID);
-
-            const char = await player.characters().getAllAsArray()[0];
-            const bio = await char.getBioBlob();
-
-            // @ts-ignore
-            await bio.set("the fuck");
-
-            ok();
-        }
-    };
-
-    player.ready().on(async () => {
-        t.false(isPlayerReady);
-        isPlayerReady = true;
-        await tryFinish();
-    });
-
-    gm.ready().on(async () => {
-        t.false(isGmReady);
-        isGmReady = true;
-        await tryFinish();
     });
 }));
 
