@@ -1,56 +1,103 @@
 import test from 'ava';
 import * as R20 from "./src/index";
+import {Roll20Client} from "./src/index";
 
 const dotenv = require("dotenv");
 const fs = require("fs");
 
 const nonGmEnv = dotenv.parse(fs.readFileSync(".env.test"));
 const gmEnv= dotenv.parse(fs.readFileSync(".env.test.gm"));
+const researchEnv= dotenv.parse(fs.readFileSync(".env.research"));
 
 
 const timeout = (err: (a: any) => void, time = 10000) => {
     setTimeout(() => err(`timed out after ${time}ms`), time);
 };
 
-const connectToCampaignWithThese = (campaign: string, playerId: string, gntkn: string) =>
-    new R20.Campaign(campaign, playerId, gntkn);
+const connectToCampaignWithThese = async (campaign: string, playerId: string, gntkn: string) => {
+    const client = new R20.Roll20Client(campaign);
+    await client.login(gntkn);
+    return client;
+}
 
-const connectToCampaignAsGM = () => connectToCampaignWithThese(
+
+const connectToCampaignAsGM = async () => await connectToCampaignWithThese(
     <string>gmEnv.ROLL20_CAMPAIGN_PATH,
     <string>gmEnv.ROLL20_PLAYER_ID,
     <string>gmEnv.ROLL20_GNTKN);
 
-const connectToCampaignAsPlayer= () => connectToCampaignWithThese(
+const connectToCampaignAsPlayer= async () => await connectToCampaignWithThese(
     <string>nonGmEnv.ROLL20_CAMPAIGN_PATH,
     <string>nonGmEnv.ROLL20_PLAYER_ID,
     <string>nonGmEnv.ROLL20_GNTKN);
 
-
-test("user acc permissions", t => new Promise((ok, err) => {
+test("two clients on different campaigns", t => new Promise(async (ok, err)=> {
     timeout(err);
 
-    const player = connectToCampaignAsPlayer();
+    const test2 = await connectToCampaignWithThese(
+        <string>researchEnv.ROLL20_CAMPAIGN_PATH,
+        <string>researchEnv.ROLL20_PLAYER_ID,
+        <string>researchEnv.ROLL20_GNTKN);
+
+
+    const test1 = await connectToCampaignWithThese(
+        <string>gmEnv.ROLL20_CAMPAIGN_PATH,
+        <string>gmEnv.ROLL20_PLAYER_ID,
+        <string>gmEnv.ROLL20_GNTKN);
+
+    let ready1 = false;
+    let ready2 = false;
+
+    const tryFinish = (instance:  Roll20Client) => {
+        console.log(`can see players: ${instance.players().getAllAsArray().reduce((s, p) => s += p.getDisplayName() + " ", "")}`);
+        if(ready1 && ready2) {
+            t.true(true);
+            ok();
+        }
+    };
+
+    test1.ready().on(async () => {
+        ready1 = true;
+        tryFinish(test1);
+    });
+
+    test2.ready().on(async () => {
+        ready2 = true;
+        tryFinish(test2);
+    });
+}));
+
+test("user acc permissions", t => new Promise(async (ok, err) => {
+    timeout(err);
+
+    const player = await connectToCampaignAsPlayer();
 
     player.ready().on(async () => {
-        const char = await player.characters().create();
-        const bio = await char.getBioBlob();
 
-        // @ts-ignore
-        await bio.set("the fuck");
+        let caught = false;
+        try {
+            await player.characters().create();
+        } catch(err) {
+            caught = true;
+        }
+
+        t.true(caught);
+        ok();
     });
 }));
 
 test("cannot get current player until chars are ready", t => new Promise(async (ok, err)=> {
     timeout(err);
 
-    const camp = connectToCampaignAsGM();
+    const camp = await connectToCampaignAsGM();
     t.throws(camp.getCurrentPlayer);
     ok();
+
 }));
 
 test("current player has valid data", t => new Promise(async (ok, err) => {
     timeout(err);
-    const camp = connectToCampaignAsGM();
+    const camp = await connectToCampaignAsGM();
 
     camp.players().ready().on(async () => {
         const p = camp.getCurrentPlayer();
@@ -65,16 +112,16 @@ test("current player has valid data", t => new Promise(async (ok, err) => {
     });
 }));
 
-test("login with both gm and normal user accs", t => new Promise((ok, err) => {
+test("login with both gm and normal user accs", t => new Promise(async (ok, err) => {
     timeout(err);
 
-    const player = connectToCampaignAsPlayer();
-    const gm = connectToCampaignAsGM();
+    const player = await connectToCampaignAsPlayer();
+    const gm = await connectToCampaignAsGM();
 
     let isGmReady = false;
     let isPlayerReady = false;
 
-    const tryFinish = async () => {
+    const tryFinish = async () =>  {
         if(isGmReady && isPlayerReady) {
 
             // try modifying some stuff as player that we dont have perms to
@@ -124,7 +171,7 @@ test("global ready fired when all resources are ready without awaiting", t => ne
     t.plan(3);
     timeout(err);
 
-    const camp = connectToCampaignAsGM();
+    const camp = await connectToCampaignAsGM();
     let playersReady = false;
     let charsReady = false;
     let chatReady = false;
@@ -150,7 +197,7 @@ test("global ready fired when all resources are ready without awaiting", t => ne
 test("characters api", t => new Promise(async (ok, err) => {
     timeout(err);
 
-    const camp = connectToCampaignAsGM();
+    const camp = await connectToCampaignAsGM();
 
     camp.characters().ready().on(async () => {
         const chars = camp.characters().getAllAsArray();
@@ -158,7 +205,7 @@ test("characters api", t => new Promise(async (ok, err) => {
 
         const char = chars[0];
 
-        t.true(char.getCampaign() === camp);
+        t.true(char.getClient() === camp);
         t.truthy(char.getFirebase());
         t.truthy(char.getLowLevel());
         t.falsy(char.getPreviousLowLevel());

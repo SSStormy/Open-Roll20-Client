@@ -1,20 +1,17 @@
-import {Campaign, ChatMessage, Character} from "./index";
+import {Roll20Client, ChatMessage, Character} from "./index";
 
 const dotenv = require("dotenv");
 const fs = require("fs");
 
-const cfg = dotenv.parse(fs.readFileSync(".env.test"));
+const cfg = dotenv.parse(fs.readFileSync(".env.research"));
 for (const key in cfg) {
     process.env[key] = cfg[key];
 }
 
 const asyncCtx = async () => {
 
-    const campaign = new Campaign(
-        <string>process.env.ROLL20_CAMPAIGN_PATH,
-        <string>process.env.ROLL20_PLAYER_ID);
-
-    await campaign.login(<string>process.env.ROLL20_GNTKN);
+    const campaign = new Roll20Client(
+        <string>process.env.ROLL20_CAMPAIGN_PATH);
 
     campaign.ready().on(async () => {
         console.log("ready.");
@@ -36,7 +33,6 @@ const asyncCtx = async () => {
 
     });
 
-
     campaign.characters().added().on(async (char: Character) => {
         campaign.say("new character added");
     });
@@ -49,6 +45,8 @@ const asyncCtx = async () => {
     campaign.characters().removed().on(async (char: Character) => {
         campaign.say("character removed.");
     });
+
+    await campaign.login(<string>process.env.ROLL20_GNTKN);
 };
 
 asyncCtx().catch(console.error);

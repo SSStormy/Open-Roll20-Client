@@ -7,25 +7,19 @@ export interface IBaseLowData {
     id: string;
 }
 
-// TODO : import these from roll20.d.ts
-
-export abstract class HighLevelObject<TLow extends IBaseLowData> {
+export abstract class HighLevelObject<TLow> {
     private lowLevel: TLow;
     private previousLowLevel: TLow | null = null;
-    private campaign: Campaign;
+    private client: Roll20Client;
     private firebase: Firebase_Child_T;
 
-    public constructor(lowLevel: TLow, campaign: Campaign, fb: Firebase_Child_T) {
-        this.campaign = campaign;
+    public constructor(lowLevel: TLow, client: Roll20Client, fb: Firebase_Child_T) {
+        this.client = client;
         this.firebase = fb;
     }
 
     public destroy() {
         return this.firebase.remove();
-    }
-
-    public getId() {
-        return this.getLowLevel().id;
     }
 
     public getFirebase() {
@@ -39,8 +33,8 @@ export abstract class HighLevelObject<TLow extends IBaseLowData> {
 
     public abstract updateLowLevelData(newLow: TLow): void;
 
-    public getCampaign() {
-        return this.campaign
+    public getClient() {
+        return this.client
     }
 
     public getLowLevel() {
@@ -68,6 +62,11 @@ export abstract class HighLevelObject<TLow extends IBaseLowData> {
     }
 }
 
+export abstract class HighLevelIdObject<TLow extends IBaseLowData> extends HighLevelObject<TLow> {
+    public getId() {
+        return this.getLowLevel().id;
+    }
+}
 
 export interface IAttributeData extends IBaseLowData {
     name?: string;
@@ -75,15 +74,15 @@ export interface IAttributeData extends IBaseLowData {
     max?: string;
 }
 
-export class Attribute extends HighLevelObject<IAttributeData> {
+export class Attribute extends HighLevelIdObject<IAttributeData> {
 
-    private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
-        super(lowLevel, campaign, fb);
+    private constructor(lowLevel: IAttributeData, client: Roll20Client, fb: Firebase_Child_T) {
+        super(lowLevel, client, fb);
         this.updateLowLevelData(lowLevel);
     }
 
-    public static async fromRaw(rawData: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
-        return new Attribute(rawData, campaign, fb);
+    public static async fromRaw(rawData: IAttributeData, client: Roll20Client, fb: Firebase_Child_T) {
+        return new Attribute(rawData, client, fb);
     }
 
     public updateLowLevelData(newLow: IAttributeData): void {
@@ -144,7 +143,7 @@ export abstract class HighArrayCommon<THigh>
     protected lowCache: string[];
 
     protected dataName: string;
-    protected parent: HighLevelObject<any>;
+    protected parent: HighLevelIdObject<any>;
     protected isCacheValid: boolean = false;
 
     protected dataSelector: (obj: THigh) => string;
@@ -152,7 +151,7 @@ export abstract class HighArrayCommon<THigh>
 
     public constructor(
         dataName: string,
-        parent: HighLevelObject<any>,
+        parent: HighLevelIdObject<any>,
         lowToHigh: (obj: string) => THigh | null,
         dataSelector: (obj: THigh) => string) {
 
@@ -281,18 +280,18 @@ export class HighCommaSeparatedIdArray<THigh>
     }
 }
 
-export class Macro extends HighLevelObject<IMacroData> {
+export class Macro extends HighLevelIdObject<IMacroData> {
 
     private visibleToArray: IHighArray<Player>;
 
-    private constructor(lowLevel: IMacroData, campaign: Campaign, fb: Firebase_Child_T) {
-        super(lowLevel, campaign, fb);
+    private constructor(lowLevel: IMacroData, client: Roll20Client, fb: Firebase_Child_T) {
+        super(lowLevel, client, fb);
         this.updateLowLevelData(lowLevel);
 
         this.visibleToArray = new HighCommaSeparatedIdArray<Player>(
             "visibleto",
             this,
-            (id: string) => campaign.players().getById(id),
+            (id: string) => client.players().getById(id),
             (obj: Player) => obj.getId()
         );
     }
@@ -300,15 +299,15 @@ export class Macro extends HighLevelObject<IMacroData> {
     public updateLowLevelData(newLow: IMacroData): void {
         this.setNewLowLevel(newLow);
 
-        if(this.visibleToArray) this.visibleToArray.invalidateCache();
+        if (this.visibleToArray) this.visibleToArray.invalidateCache();
     }
 
     public static async fromRaw(
         rawData: IMacroData,
-        campaign: Campaign,
+        client: Roll20Client,
         fb: Firebase_Child_T) {
 
-        return new Macro(rawData, campaign, fb);
+        return new Macro(rawData, client, fb);
     }
 
     public getAction() {
@@ -383,15 +382,15 @@ const safeParseToInt = (val: any) => {
     return NaN;
 };
 
-export class Player extends HighLevelObject<IPlayerData> {
+export class Player extends HighLevelIdObject<IPlayerData> {
     private macros: FirebaseCollection<Macro, IMacroData>;
 
-    private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
-        super(lowLevel, campaign, fb);
+    private constructor(lowLevel: IAttributeData, client: Roll20Client, fb: Firebase_Child_T) {
+        super(lowLevel, client, fb);
         this.updateLowLevelData(lowLevel);
 
         this.macros = new FirebaseCollection(
-            campaign,
+            client,
             `/macros/player/${lowLevel.id}/`,
             Macro.fromRaw
         );
@@ -403,10 +402,10 @@ export class Player extends HighLevelObject<IPlayerData> {
 
     public static async fromRaw(
         rawData: IPlayerData,
-        campaign: Campaign,
+        client: Roll20Client,
         fb: Firebase_Child_T) {
 
-        const player = new Player(rawData, campaign, fb);
+        const player = new Player(rawData, client, fb);
         await player.macros.getReadyPromise();
         return player;
     }
@@ -420,7 +419,7 @@ export class Player extends HighLevelObject<IPlayerData> {
     }
 
     public isUs(): boolean {
-        const p = this.getCampaign().getCurrentPlayer();
+        const p = this.getClient().getCurrentPlayer();
         if (!p) return false;
 
         return this.getUserAccountId() === p.getUserAccountId();
@@ -491,15 +490,15 @@ export interface ICharacterAbilityData extends IBaseLowData {
     order?: number;
 }
 
-export class CharacterAbility extends HighLevelObject<ICharacterAbilityData> {
+export class CharacterAbility extends HighLevelIdObject<ICharacterAbilityData> {
 
-    private constructor(lowLevel: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
-        super(lowLevel, campaign, fb);
+    private constructor(lowLevel: IAttributeData, client: Roll20Client, fb: Firebase_Child_T) {
+        super(lowLevel, client, fb);
         this.updateLowLevelData(lowLevel);
     }
 
-    public static async fromRaw(rawData: IAttributeData, campaign: Campaign, fb: Firebase_Child_T) {
-        return new CharacterAbility(rawData, campaign, fb);
+    public static async fromRaw(rawData: IAttributeData, client: Roll20Client, fb: Firebase_Child_T) {
+        return new CharacterAbility(rawData, client, fb);
     }
 
     public updateLowLevelData(newLow: ICharacterAbilityData): void {
@@ -564,7 +563,7 @@ export interface ICharacterData extends IBaseLowData {
     abilorder?: string; // @NO-API
 }
 
-export class Character extends HighLevelObject<ICharacterData> {
+export class Character extends HighLevelIdObject<ICharacterData> {
 
     private _attributes: FirebaseCollection<Attribute, IAttributeData>;
     private _abilities: FirebaseCollection<CharacterAbility, ICharacterAbilityData>;
@@ -577,11 +576,11 @@ export class Character extends HighLevelObject<ICharacterData> {
     private gmNotesBlob: FirebaseVar<string> | null;
     private defaultTokenBlob: FirebaseVar<any> | null; // TODO : parse type
 
-    private constructor(lowLevel: ICharacterData, campaign: Campaign, fb: Firebase_Child_T) {
-        super(lowLevel, campaign, fb);
+    private constructor(lowLevel: ICharacterData, client: Roll20Client, fb: Firebase_Child_T) {
+        super(lowLevel, client, fb);
         this.updateLowLevelData(lowLevel);
 
-        const players = campaign.players();
+        const players = client.players();
         const getPlayerId = (obj: Player) => obj.getId();
 
         this.highTagsArray = new HighJsonIdArray(
@@ -606,36 +605,36 @@ export class Character extends HighLevelObject<ICharacterData> {
         );
 
         this._attributes = new FirebaseCollection(
-            campaign,
+            client,
             `/char-attribs/char/${lowLevel.id}/`,
             Attribute.fromRaw
         );
 
         this._abilities = new FirebaseCollection(
-            campaign,
+            client,
             `/char-abils/char/${lowLevel.id}/`,
             CharacterAbility.fromRaw
         );
 
-        this.bioBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/bio/`, (d: string) => Promise.resolve(d));
-        this.gmNotesBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/gmnotes/`, (d: string) => Promise.resolve(d));
-        this.defaultTokenBlob = new FirebaseVar(this.getCampaign(), `/char-blobs/${this.getId()}/defaulttoken/`, (d: string) => Promise.resolve(d));
+        this.bioBlob = new FirebaseVar(this.getClient(), `/char-blobs/${this.getId()}/bio/`, (d: string) => Promise.resolve(d));
+        this.gmNotesBlob = new FirebaseVar(this.getClient(), `/char-blobs/${this.getId()}/gmnotes/`, (d: string) => Promise.resolve(d));
+        this.defaultTokenBlob = new FirebaseVar(this.getClient(), `/char-blobs/${this.getId()}/defaulttoken/`, (d: string) => Promise.resolve(d));
     }
 
     public updateLowLevelData(newLow: ICharacterData): void {
         this.setNewLowLevel(newLow);
 
-        if(this.highTagsArray) this.highTagsArray.invalidateCache();
-        if(this.highControlledBy) this.highControlledBy.invalidateCache();
-        if(this.highInJournals) this.highInJournals.invalidateCache();
+        if (this.highTagsArray) this.highTagsArray.invalidateCache();
+        if (this.highControlledBy) this.highControlledBy.invalidateCache();
+        if (this.highInJournals) this.highInJournals.invalidateCache();
     }
 
     public static async fromRaw(
         rawData: ICharacterData,
-        campaign: Campaign,
+        client: Roll20Client,
         fb: Firebase_Child_T) {
 
-        const char = new Character(rawData, campaign, fb);
+        const char = new Character(rawData, client, fb);
 
         await Promise.all([
             char._attributes.getReadyPromise(),
@@ -699,7 +698,7 @@ export class Character extends HighLevelObject<ICharacterData> {
     public canAccessBlobs() {
 
         const controlledBy = this.getLowLevel().controlledby || "";
-        return controlledBy.includes(this.getCampaign().getCurrentPlayerId());
+        return controlledBy.includes(this.getClient().getCurrentPlayerId());
     }
 
     public attributes() {
@@ -773,10 +772,10 @@ export interface IRollData {
     type?: string;
 }
 
-export class ChatMessage extends HighLevelObject<IChatMessageData> {
+export class ChatMessage extends HighLevelIdObject<IChatMessageData> {
 
-    private constructor(lowLevel: IChatMessageData, campaign: Campaign, fb: Firebase_Child_T) {
-        super(lowLevel, campaign, fb);
+    private constructor(lowLevel: IChatMessageData, client: Roll20Client, fb: Firebase_Child_T) {
+        super(lowLevel, client, fb);
         this.updateLowLevelData(lowLevel);
     }
 
@@ -793,7 +792,7 @@ export class ChatMessage extends HighLevelObject<IChatMessageData> {
     }
 
     public getPlayer(): Player | null {
-        return this.getCampaign().players().getById(this.getLowLevel().playerid);
+        return this.getClient().players().getById(this.getLowLevel().playerid);
     }
 
     public getType(): string {
@@ -810,45 +809,74 @@ export class ChatMessage extends HighLevelObject<IChatMessageData> {
 
     public static async fromRaw(
         rawData: IChatMessageData,
-        campaign: Campaign,
+        client: Roll20Client,
         fb: Firebase_Child_T) {
-        return new ChatMessage(rawData, campaign, fb);
+        return new ChatMessage(rawData, client, fb);
     }
 
 }
 
-export class Campaign {
-    public firebase: Firebase_T;
+interface IAuthResponse {
+    auth: {
+        is_gm: boolean;
+        playerid: string;
+        userid: number;
+        token: {
+            is_gm: boolean;
+            playerid: string;
+            userid: number;
+            exp: number;
+            iat: number;
+            aud: string;
+            currentcampaign: string;
+            auth_time: number;
+            iss: string;
+        }
+        currentcampaign: string;
+    }
+    expires: number;
+    token: string;
+    uid: any; // unknown
+    privder: string;
+}
 
-    private playerId: string;
+export class Roll20Client {
+    private _firebase: Firebase_T;
+    private _campaign: Campaign;
 
-    private characterCollectin: FirebaseCollection<Character, ICharacterData>;
-    private playerCollection: FirebaseCollection<Player, IPlayerData>;
-    private chatMessages: FirebaseCollection<ChatMessage, IChatMessageData>;
+    private _playerId: string;
 
-    private readyEvent: FunctionPoolForReadyEvents<() => void> = new FunctionPoolForReadyEvents();
-    private ourPlayer: Player | null;
+    private _characterCollectin: FirebaseCollection<Character, ICharacterData>;
+    private _playerCollection: FirebaseCollection<Player, IPlayerData>;
+    private _chatMessages: FirebaseCollection<ChatMessage, IChatMessageData>;
 
-    public constructor(campaignUrl: string, playerId: string, gntkn: string) {
+    private _readyEvent: FunctionPoolForReadyEvents<() => void> = new FunctionPoolForReadyEvents();
+    private _ourPlayer: Player | null;
+
+    private _isLoggedIn: boolean = false;
+
+    public constructor(campaignUrl: string) {
+
         // @ts-ignore
-        this.firebase = new Firebase(campaignUrl);
-        this.chatMessages = this.firebase.child("/chat/");
-        this.playerId = playerId;
+        this._firebase = new Firebase(campaignUrl, new Firebase.Context());
 
-        this.characterCollectin = new FirebaseCollection<Character, ICharacterData>(
+        this._chatMessages = this._firebase.child("/chat/");
+        this._campaign = new Campaign(this);
+
+        this._characterCollectin = new FirebaseCollection<Character, ICharacterData>(
             this,
             "/characters/",
             Character.fromRaw
         );
 
 
-        this.playerCollection = new FirebaseCollection<Player, IPlayerData>(
+        this._playerCollection = new FirebaseCollection<Player, IPlayerData>(
             this,
             "/players/",
             Player.fromRaw
         );
 
-        this.chatMessages = new FirebaseCollection<ChatMessage, IChatMessageData>(
+        this._chatMessages = new FirebaseCollection<ChatMessage, IChatMessageData>(
             this,
             "/chat/",
             ChatMessage.fromRaw
@@ -859,70 +887,102 @@ export class Campaign {
         });
 
         Promise.all([
-            this.characterCollectin.getReadyPromise(),
-            this.playerCollection.getReadyPromise(),
-            this.chatMessages.getReadyPromise()
+            this._characterCollectin.getReadyPromise(),
+            this._playerCollection.getReadyPromise(),
+            this._chatMessages.getReadyPromise(),
+            this._campaign.getReadyPromise(),
         ])
             .then(() => {
                 console.log("READY!");
-                this.readyEvent.setReady();
-                this.readyEvent.fireAll();
+                this._readyEvent.setReady();
+                this._readyEvent.fireAll();
             });
+    }
 
-        // Note(Justas): Bug in firebase: all but one last promise returned from authWithCustomToken
-        // will fail to properly resolve, meaning we cannot await this or we deadlock :(.
-        this.getFirebase().authWithCustomToken(gntkn);
+    public login(gntkn: string) {
+        return new Promise<IAuthResponse>((ok, err) => {
+            this.getFirebase().authWithCustomToken(gntkn, (e: any, authRoot: IAuthResponse) => {
+                if (e) {
+                    err(e);
+                    return;
+                }
+
+                this._playerId = authRoot.auth.playerid;
+                this._isLoggedIn = true;
+                ok(authRoot);
+            });
+        })
+    }
+
+    public isLoggedIn() {
+        return this._isLoggedIn;
+    }
+
+    public assertLoggedIn() {
+        if (!this._isLoggedIn) {
+            throw new Error("Client must be logged in to do this operation");
+        }
+    }
+
+    public campaign() {
+        return this.campaign;
     }
 
     public getCurrentPlayerId() {
-        return this.playerId;
+        this.assertLoggedIn();
+
+        return this._playerId;
     }
 
     public getCurrentPlayer(): Player | null {
+        this.assertLoggedIn();
+
         if (!this.characters().isReady()) {
             throw new Error("Cannot get current player until the character collection is ready.");
         }
 
-        if (!this.ourPlayer) {
-            this.ourPlayer = this.players().getById(this.playerId);
+        if (!this._ourPlayer) {
+            this._ourPlayer = this.players().getById(this._playerId);
         }
 
-        if (!this.ourPlayer) {
-            console.error(`Cannot find local player who has id of ${this.playerId}`);
+        if (!this._ourPlayer) {
+            console.error(`Cannot find local player who has id of ${this._playerId}`);
             // @ts-ignore
             return null;
         }
 
-        return this.ourPlayer;
+        return this._ourPlayer;
     }
 
     public getFirebase() {
-        return this.firebase;
+        return this._firebase;
     }
 
     public characters() {
-        return this.characterCollectin;
+        return this._characterCollectin;
     }
 
     public players() {
-        return this.playerCollection;
+        return this._playerCollection;
     }
 
     public chat() {
-        return this.chatMessages;
+        return this._chatMessages;
     }
 
     public ready() {
-        return this.readyEvent;
+        return this._readyEvent;
     }
 
     public say(content: string, who: string = "not a bot", type: string = "general") {
+        this.assertLoggedIn();
+
         return new Promise((ok, err) => {
-            const fb = this.chatMessages.getFirebase();
+            const fb = this._chatMessages.getFirebase();
 
             const data = {
                 content,
-                playerid: this.playerId,
+                playerid: this._playerId,
                 who,
                 type,
             };
@@ -948,7 +1008,6 @@ export class Campaign {
                 });
             });
         });
-
     }
 }
 
@@ -1011,7 +1070,7 @@ export class FunctionPoolForReadyEvents<T> implements IFunctionPool<T> {
 }
 
 export abstract class FirebaseCommon<THigh, TLow, TInitial> {
-    private campaign: Campaign;
+    private client: Roll20Client;
     private url: string;
     private firebase: Firebase_Child_T;
 
@@ -1024,10 +1083,10 @@ export abstract class FirebaseCommon<THigh, TLow, TInitial> {
     private readyPromise: Promise<void>;
     private isReadyYet: boolean = false;
 
-    public constructor(campaign: Campaign, url: string) {
-        this.campaign = campaign;
+    public constructor(client: Roll20Client, url: string) {
+        this.client = client;
         this.url = url;
-        this.firebase = campaign.getFirebase().child(url);
+        this.firebase = client.getFirebase().child(url);
 
         this.readyPromise = new Promise(ok => this.ready().on(async () => {
             console.log(`${this.url} IS READY`);
@@ -1078,8 +1137,8 @@ export abstract class FirebaseCommon<THigh, TLow, TInitial> {
         return this.removedEvent;
     }
 
-    public getCampaign() {
-        return this.campaign;
+    public getClient() {
+        return this.client;
     }
 
     public getFirebase() {
@@ -1095,10 +1154,10 @@ export class FirebaseVar<THigh> extends FirebaseCommon<THigh, string, string> {
 
     private cache: THigh | null = null;
 
-    private highLevelFactory: (a: string, b: Campaign, fb: Firebase_Child_T) => Promise<THigh>;
+    private highLevelFactory: (a: string, b: Roll20Client, fb: Firebase_Child_T) => Promise<THigh>;
 
-    public constructor(campaign: Campaign, url: string, factory: (a: string, b: Campaign, fb: Firebase_Child_T) => Promise<THigh>) {
-        super(campaign, url);
+    public constructor(client: Roll20Client, url: string, factory: (a: string, b: Roll20Client, fb: Firebase_Child_T) => Promise<THigh>) {
+        super(client, url);
         this.highLevelFactory = factory;
     }
 
@@ -1111,27 +1170,43 @@ export class FirebaseVar<THigh> extends FirebaseCommon<THigh, string, string> {
     }
 
     protected async initData(data: string): Promise<void> {
-        this.cache = await this.highLevelFactory(data, this.getCampaign(), this.getFirebase());
+        this.cache = await this.highLevelFactory(data, this.getClient(), this.getFirebase());
     }
 }
 
-export class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extends IBaseLowData> extends FirebaseCommon<THigh, TLow, { [id: string]: TLow }> {
+interface ICampaignData {
+    // TODO
+}
+
+export class Campaign extends FirebaseCommon<Campaign, ICampaignData, any> {
+
+    public constructor(client: Roll20Client) {
+        super(client, "/campaign/");
+    }
+
+    protected async initData(data: any): Promise<void> {
+        console.log(data);
+    }
+}
+
+export class FirebaseCollection<THigh extends HighLevelIdObject<TLow>, TLow extends IBaseLowData> extends FirebaseCommon<THigh, TLow, { [id: string]: TLow }> {
     private byId: { [id: string]: THigh } = {};
     private idToIndex: { [id: string]: number } = {};
     private all: THigh[] = [];
 
     private createPromisesResolves: { [id: string]: (data: THigh) => void } = {};
 
-    private highLevelFactory: (a: TLow, b: Campaign, fb: Firebase_Child_T) => Promise<THigh>;
+    private highLevelFactory: (a: TLow, b: Roll20Client, fb: Firebase_Child_T) => Promise<THigh>;
 
-    public constructor(campaign: Campaign, url: string, factory: (a: TLow, b: Campaign, fb: Firebase_Child_T) => Promise<THigh>) {
-        super(campaign, url);
+    public constructor(client: Roll20Client, url: string, factory: (a: TLow, b: Roll20Client, fb: Firebase_Child_T) => Promise<THigh>) {
+        super(client, url);
         this.highLevelFactory = factory;
     }
 
     public create(): Promise<THigh> {
         // @ts-ignore
         const priority = Firebase.ServerValue.TIMESTAMP;
+
         const key = this.getFirebase().push().key();
 
         const low: IBaseLowData = {
@@ -1139,16 +1214,17 @@ export class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extend
         };
 
         return new Promise((ok, err) => {
+            this.createPromisesResolves[key] = ok;
 
             this.getFirebase().child(key).setWithPriority(low, priority, (e: any) => {
+                console.log("IN SET PRIORITY CALLBACK");
                 if (e) {
+                    delete this.createPromisesResolves[key];
                     err(e);
                     return;
                 }
             });
-
-            this.createPromisesResolves[key] = ok;
-        });
+        })
     }
 
     private static deconstructFirebaseData(firebaseData: any) {
@@ -1235,7 +1311,7 @@ export class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extend
             data.id = key;
         }
 
-        const high = await this.highLevelFactory(data, this.getCampaign(), fb);
+        const high = await this.highLevelFactory(data, this.getClient(), fb);
 
         this.idToIndex[key] = this.all.length;
         this.all.push(high);
@@ -1283,7 +1359,3 @@ export class FirebaseCollection<THigh extends HighLevelObject<TLow>, TLow extend
         return this.byId[id];
     }
 }
-
-
-
-
