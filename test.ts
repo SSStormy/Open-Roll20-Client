@@ -1,5 +1,6 @@
 import test from 'ava';
 import {Roll20Client, Roll20Client1} from "./src/roll20Client";
+import {Character} from "./src/Model/Character";
 
 const dotenv = require("dotenv");
 const fs = require("fs");
@@ -147,7 +148,7 @@ test("characters api", t => new Promise(async (ok, err) => {
         const chars = camp.characters().getAllAsArray();
         t.deepEqual(chars.length, 1);
 
-        const char = chars[0];
+        const char: Character = chars[0];
 
         t.true(char.getClient() === camp);
         t.truthy(char.getFirebase());
@@ -159,7 +160,7 @@ test("characters api", t => new Promise(async (ok, err) => {
         t.deepEqual(char.getAvatarURL(), "https://s3.amazonaws.com/files.d20.io/images/63496114/APrvcB7hlLkqX8tJWX7jYg/max.png?1537872196");
         t.false(char.isArchived());
 
-        const tags = char.getTags();
+        const tags = char.tags();
         {
             await tags.clear();
             t.deepEqual(tags.getLocalValues(), []);
@@ -191,4 +192,96 @@ test("characters api", t => new Promise(async (ok, err) => {
     });
 }));
 
-test.todo("character token high-level obj");
+test("rollable table api", t => new Promise(async (ok, err) => {
+    const camp = await connectToCampaignAsGM();
+
+    camp.rollableTables().ready().on(async () => {
+
+        t.deepEqual(camp.rollableTables().getAllAsArray(), []);
+        const table = await camp.rollableTables().create();
+        t.deepEqual(camp.rollableTables().getAllAsArray(), [table]);
+
+        await table.setVisibleByPlayers(true);
+        await table.setName("test table");
+
+        t.deepEqual(table.getName(), "test table");
+        t.true(table.isVisibleByPlayers());
+
+        t.deepEqual(table.items().getAllAsArray(), []);
+        const tableItem = await table.items().create();
+        t.deepEqual(table.items().getAllAsArray(), [tableItem]);
+
+        await tableItem.setAvatarURL("test avatar");
+        await tableItem.setName("test name");
+        await tableItem.setWeight(35);
+
+        t.deepEqual(tableItem.getAvatarURL(), "test avatar");
+        t.deepEqual(tableItem.getName(), "test name");
+        t.deepEqual(tableItem.getWeight(), 35);
+
+        let addedEvent = false;
+        let changedEvent = false;
+        let removdEvent = false;
+        camp.rollableTables().added().on(async (newTable: RollableTable) => {
+            addedEvent = true;
+            t.deepEqual(table2.getId(), newTable.getId());
+        });
+
+        camp.rollableTables().changed().on(async (changedTable: RollableTable) => {
+            changedTable = true;
+            t.deepEqual(table2.getId(), changedTable.getId());
+            t.deepEqual(changedTable.getName(), "test name 2");
+        });
+
+        camp.rollableTables().changed().on(async (changedTable: RollableTable) => {
+           removdEvent = true;
+        });
+
+        const table2 = await camp.rollableTables().create();
+
+        t.deepEqual(camp.rollableTables().getAllAsArray(), [table, table2]);
+        t.true(addedEvent);
+
+        await table2.setName("test name 2");
+        t.true(changedEvent);
+
+        let itemAddedEvent = false;
+        let itemChangedEvent = false;
+        let itemRemovedEvent = false;
+        table2.items().added().on(async (addedItem: RollableTableItem) => {
+            itemAddedEvent = true;
+            t.deepEqual(table2Item.getId(), addedItem.getId());
+        });
+        table2.items().changed().on(async (changedItem: RollableTableItem) => {
+            itemChangedEvent = true;
+            t.deepEqual(table2Item.getId(), changedItem.getId());
+            t.deepEqual(changedItem.getName(), "test item name 2");
+        });
+        table2.items().removed().on(async (removedItem: RollableTableItem) => {
+            itemRemovedEvent = true;
+            t.deepEqual(table2Item.getId(), removedItem.getId());
+        });
+
+        const table2Item = await table2.items().create();
+        t.true(itemAddedEvent);
+
+        await table2Item.setName("test item name 2");
+        t.true(itemChangedEvent);
+
+        await table2Item.destroy();
+        t.true(itemRemovedEvent);
+
+        await table2.destroy();
+        t.true(removdEvent);
+
+        t.deepEqual(camp.rollableTables().getAllAsArray(), [table]);
+        await table.destroy();
+
+        t.deepEqual(camp.rollableTables().getAllAsArray(), []);
+    });
+}));
+
+test.todo("character token high-level obj + events");
+test.todo("character attributes + events");
+test.todo("character abilities + events");
+test.todo("player macros + events");

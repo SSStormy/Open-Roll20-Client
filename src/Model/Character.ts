@@ -118,11 +118,6 @@ export class Character extends HighLevelIdObject<ICharacterData> {
         return this.highInJournals;
     }
 
-    public getTags(): IHighArray<string> {
-        this.highTagsArray.tryRepopulate();
-        return this.highTagsArray;
-    }
-
     public getId(): string {
         return this.getLowLevel().id || "";
     }
@@ -159,5 +154,10 @@ export class Character extends HighLevelIdObject<ICharacterData> {
 
     public abilities() {
         return this._abilities;
+    }
+
+    public tags(): IHighArray<string> {
+        this.highTagsArray.tryRepopulate();
+        return this.highTagsArray;
     }
 }
