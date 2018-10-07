@@ -1,6 +1,5 @@
 import test from 'ava';
-import * as R20 from "./src/index";
-import {Roll20Client} from "./src/index";
+import {Roll20Client, Roll20Client1} from "./src/roll20Client";
 
 const dotenv = require("dotenv");
 const fs = require("fs");
@@ -15,7 +14,7 @@ const timeout = (err: (a: any) => void, time = 10000) => {
 };
 
 const connectToCampaignWithThese = async (campaign: string, playerId: string, gntkn: string) => {
-    const client = new R20.Roll20Client(campaign);
+    const client = new Roll20Client1(campaign);
     await client.login(gntkn);
     return client;
 }

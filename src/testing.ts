@@ -1,4 +1,4 @@
-import {Roll20Client, ChatMessage, Character} from "./index";
+import {Roll20Client} from "./Roll20Client";
 
 const dotenv = require("dotenv");
 const fs = require("fs");
@@ -17,11 +17,10 @@ const asyncCtx = async () => {
 
     campaign.players().ready().on(async () => {
         const p = campaign.getCurrentPlayer();
-
+        console.log(p);
     });
 
 
 };
 
 asyncCtx().catch(console.error);
-b

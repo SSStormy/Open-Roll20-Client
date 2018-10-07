@@ -1,7 +1,6 @@
 module.exports = {
     entry: {
-        "testing": "./src/testing.ts",
-        "index": "./src/index.ts"
+        "testing": "./src/testing.ts"
     },
 
     mode: "development",
