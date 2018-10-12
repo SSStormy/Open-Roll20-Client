@@ -1,10 +1,8 @@
 import {Player} from "./Player";
-import {IInlineRoll} from "../Interface/IInlineRoll";
 import {HighLevelIdObject} from "../Abstract/HighLevelIdObject";
 import {Firebase_Child_T} from "../Abstract/FirebaseTypes";
-import {IChatMessageData} from "../Interface/IChatMessageData";
+import {IChatMessageData, IInlineRoll} from "../Interface/IChatMessageData";
 import {Roll20Client} from "../Roll20Client";
-
 
 export class ChatMessage extends HighLevelIdObject<IChatMessageData> {
 

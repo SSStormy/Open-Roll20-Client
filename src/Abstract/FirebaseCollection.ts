@@ -3,6 +3,7 @@ import {IBaseLowData} from "../Interface/IBaseLowData";
 import {FirebaseCommon} from "./FirebaseCommon";
 import {Firebase_Child_T} from "./FirebaseTypes";
 import {Roll20Client} from "../Roll20Client";
+import {LowLevelNoId} from "../Utils/LowLevelNoId";
 
 export class FirebaseCollection<THigh extends HighLevelIdObject<TLow>, TLow extends IBaseLowData> extends FirebaseCommon<THigh, TLow, { [id: string]: TLow }> {
     private _byId: { [id: string]: THigh } = {};
@@ -20,7 +21,7 @@ export class FirebaseCollection<THigh extends HighLevelIdObject<TLow>, TLow exte
         this._highLevelFactory = factory;
     }
 
-    public create(): Promise<THigh> {
+    public create(initial?: LowLevelNoId<TLow>): Promise<THigh> {
         this._log.debug(`Firebase collection ${this._purpose}: Creating new object.`);
 
         // @ts-ignore
@@ -28,14 +29,16 @@ export class FirebaseCollection<THigh extends HighLevelIdObject<TLow>, TLow exte
 
         const key = this.getFirebase().push().key();
 
-        const low: IBaseLowData = {
+        const data: any = {
+            // @ts-ignore
+            ...initial,
             id: key
         };
 
         return new Promise((ok, err) => {
             this._createPromisesResolves[key] = ok;
 
-            this.getFirebase().child(key).setWithPriority(low, priority, (e: any) => {
+            this.getFirebase().child(key).setWithPriority(data, priority, (e: any) => {
                 this._log.debug(`Firebase collection ${this._purpose}: IN SET PRIORITY CALLBACK`);
 
                 if (e) {
